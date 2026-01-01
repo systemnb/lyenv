@@ -4,11 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"lyenv/internal/cli"
 	"lyenv/internal/config"
 	"lyenv/internal/env"
+	"lyenv/internal/plugin"
 )
 
 func usage() {
@@ -191,9 +193,131 @@ func main() {
 			os.Exit(2)
 		}
 
+	case "plugin":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Error: missing subcommand for plugin (install|list|info|remove)")
+			os.Exit(2)
+		}
+		sub := args[1]
+		switch sub {
+		case "add":
+			if len(args) != 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin add <PATH>")
+				os.Exit(2)
+			}
+			path := strings.TrimSpace(args[2])
+			if err := plugin.PluginAddLocal(".", path); err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
+				os.Exit(1)
+			}
+	
+		case "install":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin install <NAME|PATH> [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
+				os.Exit(2)
+			}
+			nameOrPath := strings.TrimSpace(args[2])
+			flags := config.ParseFlags(args[3:])
+			repo := flags["repo"]
+			ref := flags["ref"]
+			source := flags["source"]
+			proxy := flags["proxy"]
+			if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy); err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
+				os.Exit(1)
+			}
+		case "list":
+			r, err := plugin.LoadRegistry(".")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin list failed: %v\n", err)
+				os.Exit(1)
+			}
+			if len(r.Plugins) == 0 {
+				fmt.Println("No plugins installed.")
+			} else {
+				for _, p := range r.Plugins {
+					fmt.Printf("%s  %s  (%s)\n", p.Name, p.Version, p.Source)
+				}
+			}
+		case "info":
+			if len(args) != 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin info <NAME>")
+				os.Exit(2)
+			}
+			name := strings.TrimSpace(args[2])
+			dir := filepath.Join(".", "plugins", name)
+			man, err := plugin.LoadManifest(dir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin info failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Name: %s\nVersion: %s\n", man.Name, man.Version)
+			if len(man.Commands) > 0 {
+				fmt.Println("Commands:")
+				for _, c := range man.Commands {
+					fmt.Printf("  - %s: %s (executor=%s)\n", c.Name, c.Summary, c.Executor)
+				}
+			}
+			if len(man.Expose) > 0 {
+				fmt.Println("Exposed shims:")
+				for _, s := range man.Expose {
+					fmt.Printf("  - %s\n", s)
+				}
+			}
+		case "remove":
+			if len(args) != 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin remove <NAME>")
+				os.Exit(2)
+			}
+			name := strings.TrimSpace(args[2])
+			dir := filepath.Join(".", "plugins", name)
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin remove failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Plugin removed: %s\n", name)
+		
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown plugin subcommand: %s\n", sub)
+			os.Exit(2)
+		}
+
+	case "run":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: usage: lyenv run <PLUGIN> <COMMAND> [--merge=override|append|keep] [-- ...args]")
+			os.Exit(2)
+		}
+		pl := strings.TrimSpace(args[1])
+		cmd := strings.TrimSpace(args[2])
+
+		var rawFlags []string
+		var passArgs []string
+		if i := indexOf(args[3:], "--"); i >= 0 {
+			rawFlags = args[3 : 3+i]
+			passArgs = args[3+i+1:]
+		} else {
+			rawFlags = args[3:]
+		}
+		flags := config.ParseFlags(rawFlags)
+		strategy := config.ParseMergeStrategy(flags["merge"])
+
+		if err := plugin.RunPluginCommand(".", pl, cmd, passArgs, strategy); err != nil {
+			fmt.Fprintf(os.Stderr, "Run failed: %v\n", err)
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", args[0])
 		usage()
 		os.Exit(2)
 	}
+}
+
+func indexOf(arr []string, needle string) int {
+	for i, a := range arr {
+		if a == needle {
+			return i
+		}
+	}
+	return -1
 }

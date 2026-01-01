@@ -10,6 +10,58 @@ import (
 	"time"
 )
 
+func PluginAddLocal(envDir, srcPath string) error {
+	if srcPath == "" {
+		return fmt.Errorf("path must not be empty")
+	}
+	fi, err := os.Stat(srcPath)
+	if err != nil {
+		return fmt.Errorf("cannot access path: %w", err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("path is not a directory: %s", srcPath)
+	}
+
+	pluginsDir := filepath.Join(envDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		return err
+	}
+
+	name := filepath.Base(srcPath)
+	targetDir := filepath.Join(pluginsDir, name)
+	_ = os.RemoveAll(targetDir) // overwrite by default
+
+	if err := copyDir(srcPath, targetDir); err != nil {
+		return fmt.Errorf("failed to copy plugin dir: %w", err)
+	}
+
+	man, err := LoadManifest(targetDir)
+	if err != nil {
+		return err
+	}
+
+	if err := CreateShims(envDir, man.Name, man.Expose); err != nil {
+		return err
+	}
+
+	ip := InstalledPlugin{
+		Name:        man.Name,
+		Version:     man.Version,
+		Source:      "local",
+		Ref:         "",
+		InstalledAt: time.Now().UTC(),
+	}
+	if err := RegisterInstall(envDir, ip); err != nil {
+		return err
+	}
+
+	fmt.Println("Plugin installed successfully.")
+	for _, e := range man.Expose {
+		fmt.Printf("Executable generated: bin/%s\n", e)
+	}
+	return nil
+}
+
 func PluginAdd(envDir, src string, optSource string, optRepo string, optRef string, optProxy string) error {
 	pluginsDir := filepath.Join(envDir, "plugins")
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {

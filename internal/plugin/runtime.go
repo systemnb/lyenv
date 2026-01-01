@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	if man.Config.LocalFile != "" {
 		lp := filepath.Join(pluginDir, man.Config.LocalFile)
 		if _, err := os.Stat(lp); err == nil {
-			if pluginCfg, err = config.LoadYAML(lp); err != nil {
+			if pluginCfg, err = config.LoadAny(lp); err != nil {
 				return fmt.Errorf("failed to read plugin config: %w", err)
 			}
 		}
@@ -47,7 +48,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	if spec == nil && man.Entry.Path != "" {
 		spec = &CommandSpec{
 			Name:       command,
-			Executor:   man.Entry.Type, // likely "stdio"
+			Executor:   man.Entry.Type,
 			Program:    man.Entry.Path,
 			Args:       man.Entry.Args,
 			UseStdio:   strings.EqualFold(man.Entry.Type, "stdio"),
@@ -68,8 +69,8 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 			"plugin_dir": pluginDir,
 		},
 		"system": map[string]string{
-			"os":   strings.ToLower(os.Getenv("GOOS")),
-			"arch": strings.ToLower(os.Getenv("GOARCH")),
+			"os":   runtime.GOOS,
+			"arch": runtime.GOARCH,
 		},
 		"config": map[string]interface{}{
 			"global": globalCfg,
@@ -104,10 +105,8 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	switch strings.ToLower(spec.Executor) {
 	case "stdio":
 		resp, exitCode = spawnStdio(spec, pluginDir, req, w)
-
 	case "shell":
 		exitCode = runShell(spec, pluginDir, passArgs, w)
-
 	default:
 		writeLogLine(w, map[string]interface{}{"level": "error", "message": "unsupported executor", "executor": spec.Executor})
 		return fmt.Errorf("unsupported executor: %s", spec.Executor)
@@ -136,7 +135,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 			}
 			if p, ok := muts["plugin"].(map[string]interface{}); ok && man.Config.LocalFile != "" {
 				merged := config.MergeMapWithStrategy(pluginCfg, p, config.MergeOverride)
-				if err := config.SaveYAML(filepath.Join(pluginDir, man.Config.LocalFile), merged); err != nil {
+				if err := config.SaveAny(filepath.Join(pluginDir, man.Config.LocalFile), merged); err != nil {
 					return fmt.Errorf("failed to write plugin config: %w", err)
 				}
 				fmt.Println("Plugin local config updated.")

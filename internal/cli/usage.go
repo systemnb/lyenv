@@ -23,6 +23,17 @@ Usage:
                                      Import a value from a YAML file (dot path) into lyenv.yaml
   lyenv config importyaml <FILE> <YAML_KEY> [--to=<CONFIG_KEY>] [--type=string|int|float|bool|json] [--merge=override|append|keep] [--input=1]
                                      Import a value from a YAML file (dot path) into lyenv.yaml
+                                     lyenv plugin install <NAME|PATH> [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]
+                                     Install a plugin from local path or remote source
+  lyenv plugin add <PATH>            Install a local plugin from a directory (manifest: YAML or JSON)
+  lyenv plugin list                  List installed plugins
+  lyenv plugin info <NAME>           Show plugin manifest details
+  lyenv plugin remove <NAME>         Uninstall a plugin
+  lyenv plugin install <NAME|PATH> [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]
+                                     Install a plugin from local path or remote source (manifest: YAML or JSON)
+
+  lyenv run <PLUGIN> <COMMAND> [--merge=override|append|keep] [-- ...args]
+                                     Run a plugin command (shell or stdio as declared in manifest)
 
 `)
 }

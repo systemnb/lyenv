@@ -1,9 +1,11 @@
 package plugin
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -11,13 +13,13 @@ import (
 type CommandSpec struct {
 	Name       string            `yaml:"name"`
 	Summary    string            `yaml:"summary"`
-	Executor   string            `yaml:"executor"`    // shell|stdio
-	Program    string            `yaml:"program"`     // for shell: the command line; for stdio: program path
-	Args       []string          `yaml:"args"`        // optional default args
-	Workdir    string            `yaml:"workdir"`     // optional
-	Env        map[string]string `yaml:"env"`         // optional extra env
-	UseStdio   bool              `yaml:"use_stdio"`   // when executor=stdio, true to pass JSON req and expect JSON resp
-	LogCapture bool              `yaml:"log_capture"` // default true
+	Executor   string            `yaml:"executor"` // shell|stdio
+	Program    string            `yaml:"program"`  // shell: command line; stdio: program path
+	Args       []string          `yaml:"args"`
+	Workdir    string            `yaml:"workdir"`
+	Env        map[string]string `yaml:"env"`
+	UseStdio   bool              `yaml:"use_stdio"`
+	LogCapture bool              `yaml:"log_capture"`
 }
 
 type EntrySpec struct {
@@ -35,21 +37,43 @@ type ConfigSpec struct {
 type PluginManifest struct {
 	Name     string        `yaml:"name"`
 	Version  string        `yaml:"version"`
-	Entry    EntrySpec     `yaml:"entry"` // optional
+	Entry    EntrySpec     `yaml:"entry"`
 	Config   ConfigSpec    `yaml:"config"`
-	Commands []CommandSpec `yaml:"commands"` // one or more shell/stdio commands
-	Expose   []string      `yaml:"expose"`   // shim names (usually one)
+	Commands []CommandSpec `yaml:"commands"`
+	Expose   []string      `yaml:"expose"`
 }
 
 func LoadManifest(pluginDir string) (*PluginManifest, error) {
-	p := filepath.Join(pluginDir, "manifest.yaml")
-	data, err := os.ReadFile(p)
+	candidates := []string{
+		filepath.Join(pluginDir, "manifest.yaml"),
+		filepath.Join(pluginDir, "manifest.yml"),
+		filepath.Join(pluginDir, "manifest.json"),
+	}
+	var path string
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			path = p
+			break
+		}
+	}
+	if path == "" {
+		return nil, fmt.Errorf("failed to read manifest: not found (manifest.yaml|manifest.yml|manifest.json)")
+	}
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
 	var m PluginManifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("invalid manifest: %w", err)
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json":
+		if err := json.Unmarshal(data, &m); err != nil {
+			return nil, fmt.Errorf("invalid manifest (json): %w", err)
+		}
+	default:
+		if err := yaml.Unmarshal(data, &m); err != nil {
+			return nil, fmt.Errorf("invalid manifest (yaml): %w", err)
+		}
 	}
 	if m.Name == "" {
 		m.Name = filepath.Base(pluginDir)

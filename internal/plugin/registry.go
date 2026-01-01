@@ -12,7 +12,7 @@ import (
 type InstalledPlugin struct {
 	Name        string    `yaml:"name"`
 	Version     string    `yaml:"version"`
-	Source      string    `yaml:"source"` // local|git|archive|url
+	Source      string    `yaml:"source"`
 	Ref         string    `yaml:"ref"`
 	InstalledAt time.Time `yaml:"installed_at"`
 }

@@ -1,5 +1,7 @@
 {
     "cSpell.words": [
+        "importjson",
+        "importyaml",
         "lyenv",
         "pipefail",
         "pwsh",
