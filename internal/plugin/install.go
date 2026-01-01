@@ -48,6 +48,9 @@ func PluginAddLocal(envDir, srcPath, overrideName string) error {
 		return err
 	}
 
+	_ = NormalizePluginPermissions(targetDir)
+	_ = EnsureLogsDir(targetDir)
+
 	if err := CreateShims(envDir, installName, man.Expose); err != nil {
 		return err
 	}
@@ -204,6 +207,9 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 	if err := ValidateManifestStruct(man); err != nil {
 		return err
 	}
+
+	_ = NormalizePluginPermissions(targetDir)
+	_ = EnsureLogsDir(targetDir)
 
 	// Create shims in bin/ for each exposed alias
 	if err := CreateShims(envDir, installName, man.Expose); err != nil {

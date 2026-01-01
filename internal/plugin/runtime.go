@@ -401,26 +401,37 @@ func ctxTimeoutSeconds(ctx context.Context) int64 {
 
 // ---- executors ----
 
+// spawnStdio starts a stdio-capable program. It resolves entry path robustly,
+// parses shebang for interpreter launching, and always uses absolute plugin directory
+// to avoid duplicated relative segments (e.g., CWD + "plugins/...").
 func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req map[string]interface{}, w *bufio.Writer) (map[string]interface{}, int) {
+	// Compute absolute plugin directory
+	absPluginDir, err := filepath.Abs(pluginDir)
+	if err != nil {
+		writeLogLine(w, map[string]interface{}{"level": "error", "message": "abs pluginDir failed", "error": err.Error()})
+		return map[string]interface{}{"status": "error", "message": err.Error()}, 1
+	}
+
 	// Decide entry path:
 	entry := spec.Program
 	if filepath.IsAbs(spec.Program) {
 		// absolute path, keep as-is
 	} else if strings.ContainsRune(spec.Program, os.PathSeparator) {
-		// plugin-relative path
-		entry = filepath.Join(pluginDir, spec.Program)
+		// plugin-relative path -> use absolute path
+		entry = filepath.Join(absPluginDir, spec.Program)
 	} else {
 		// bare command name (e.g., "python3"), keep as-is
 	}
 
 	args := append(spec.Args, []string{}...)
 
-	// If entry is a plugin-relative script, try to parse shebang and launch via interpreter when applicable.
+	// If entry is an absolute script file under pluginDir, parse shebang and launch interpreter explicitly.
 	useInterpreter := false
 	interp := ""
-	scriptPath := ""
+	scriptAbs := ""
 
-	if strings.ContainsRune(spec.Program, os.PathSeparator) && !filepath.IsAbs(spec.Program) {
+	// We only attempt shebang parsing when entry points to a regular file.
+	if !isBareCommand(spec.Program) {
 		if st, err := os.Stat(entry); err == nil && !st.IsDir() {
 			f, err := os.Open(entry)
 			if err == nil {
@@ -431,15 +442,17 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 					fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "#!"))
 					if len(fields) >= 1 {
 						if filepath.Base(fields[0]) == "env" && len(fields) >= 2 {
+							// #!/usr/bin/env python3 -> resolve python3 in PATH
 							if abs, err := exec.LookPath(fields[1]); err == nil {
 								interp = abs
 								useInterpreter = true
-								scriptPath = entry
+								scriptAbs = entry // pass absolute script path
 							}
 						} else if filepath.IsAbs(fields[0]) {
+							// Absolute interpreter path
 							interp = fields[0]
 							useInterpreter = true
-							scriptPath = entry
+							scriptAbs = entry
 						}
 					}
 				}
@@ -448,17 +461,30 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 	}
 
 	var cmd *exec.Cmd
-	if useInterpreter && interp != "" && scriptPath != "" {
-		fullArgs := append(args, scriptPath)
+	if useInterpreter && interp != "" && scriptAbs != "" {
+		// Launch interpreter explicitly: <interp> [spec.Args...] <scriptAbs>
+		fullArgs := append(args, scriptAbs)
 		cmd = exec.CommandContext(ctx, interp, fullArgs...)
 	} else {
+		// Regular execution: either absolute file path or bare command name
 		cmd = exec.CommandContext(ctx, entry, args...)
 	}
 
-	cmd.Dir = dirOr(pluginDir, spec.Workdir)
+	// Use absolute plugin dir as working directory unless spec.Workdir overrides it (which we also convert to absolute).
+	cmd.Dir = func() string {
+		if strings.TrimSpace(spec.Workdir) == "" {
+			return absPluginDir
+		}
+		if filepath.IsAbs(spec.Workdir) {
+			return spec.Workdir
+		}
+		return filepath.Join(absPluginDir, spec.Workdir)
+	}()
+
 	cmd.Env = withExtraEnv(os.Environ(), spec.Env)
 	cmd.Stderr = newLogWriter(w, "stderr")
 
+	// Extra debug context
 	writeLogLine(w, map[string]interface{}{
 		"level":   "debug",
 		"message": "spawn stdio",
@@ -486,8 +512,13 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		writeLogLine(w, map[string]interface{}{"level": "error", "message": "resp decode failed", "error": err.Error()})
 		return map[string]interface{}{"status": "error", "message": err.Error()}, exitCode(err)
 	}
-	err := cmd.Wait()
+	err = cmd.Wait()
 	return resp, exitCode(err)
+}
+
+// isBareCommand reports whether spec.Program is a single command name without any path separator.
+func isBareCommand(p string) bool {
+	return !filepath.IsAbs(p) && !strings.ContainsRune(p, os.PathSeparator)
 }
 
 func runShell(ctx context.Context, spec *CommandSpec, pluginDir string, passArgs []string, w *bufio.Writer) int {
