@@ -182,18 +182,17 @@ func CmdActivate() error {
 	bin := filepath.Join(cwd, "bin")
 
 	// Print shell snippet (bash/zsh compatible). User should: eval "$(lyenv activate)"
-	// Ensures PATH and prompt prefix "(lyenv) ".
+	// NOTE: PS1 may be undefined in non-interactive shells; guard it to avoid 'unbound variable' with 'set -u'.
 	fmt.Printf("export LYENV_HOME=%q\n", cwd)
 	fmt.Printf("export PATH=%q:$PATH\n", bin)
 	fmt.Println(`export LYENV_ACTIVE=1`)
-	// Avoid double prefix by wrapping PS1 update in a guard (simple check)
-	// Note: We cannot evaluate conditions here; rely on shell evaluation.
-	// The snippet will set PS1 to "(lyenv) " + current PS1.
 	fmt.Println(`if [ -z "${LYENV_PROMPT_APPLIED+x}" ]; then`)
 	fmt.Println(`  export LYENV_PROMPT_APPLIED=1`)
-	fmt.Println(`  export PS1="(lyenv) ${PS1}"`)
+	fmt.Println(`  # Only modify PS1 if it is defined (handles 'set -u' non-interactive shells).`)
+	fmt.Println(`  if [ -n "${PS1+x}" ]; then`)
+	fmt.Println(`    export PS1="(lyenv) ${PS1}"`)
+	fmt.Println(`  fi`)
 	fmt.Println(`fi`)
-
 	return nil
 }
 
