@@ -33,7 +33,8 @@ func createUnixShim(binDir, shimName, installName string) error {
 	shimPath := filepath.Join(binDir, shimName)
 	content := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
-exec lyenv run %s "$@"
+# Prefer LYENV_BIN from environment; fallback to 'lyenv' in PATH
+exec "${LYENV_BIN:-lyenv}" run %s "$@"
 `, installName)
 	return os.WriteFile(shimPath, []byte(content), 0o755)
 }
@@ -41,15 +42,21 @@ exec lyenv run %s "$@"
 func createCmdShim(binDir, shimName, installName string) error {
 	shimPath := filepath.Join(binDir, shimName+".cmd")
 	content := fmt.Sprintf(`@echo off
-lyenv run %s %%*
+setlocal
+set "_LYBIN=%%LYENV_BIN%%"
+if "%%_LYBIN%%"=="" set "_LYBIN=lyenv"
+%%_LYBIN%% run %s %%*
 `, installName)
 	return os.WriteFile(shimPath, []byte(content), 0o644)
 }
 
+
 func createPsShim(binDir, shimName, installName string) error {
 	shimPath := filepath.Join(binDir, shimName+".ps1")
 	content := fmt.Sprintf(`#!/usr/bin/env pwsh
-lyenv run %s $args
+$lybin = $env:LYENV_BIN
+if ([string]::IsNullOrEmpty($lybin)) { $lybin = "lyenv" }
+& $lybin run %s $args
 `, installName)
 	return os.WriteFile(shimPath, []byte(content), 0o644)
 }
