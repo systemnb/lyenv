@@ -1,0 +1,65 @@
+name: E2E Test (lyenv)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq unzip
+
+      - name: Build lyenv
+        run: |
+          mkdir -p dist
+          go build -v -o dist/lyenv ./cmd/lyenv
+
+      - name: Setup Python (for YAML parsing)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyYAML
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Run full E2E test
+        env:
+          LYENV_BIN: ${{ github.workspace }}/dist/lyenv
+          CENTER_INDEX_URL: https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml
+        run: |
+          chmod +x scripts/full_e2e_test.sh
+          ./scripts/full_e2e_test.sh
+
+      - name: Upload E2E logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            _e2e_env_*/.lyenv/logs/**
+            _e2e_env_*/plugins/**/logs/**
+          if-no-files-found: ignore
