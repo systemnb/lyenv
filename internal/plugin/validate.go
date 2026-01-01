@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ValidateManifestStruct performs lightweight validation based on a JSON-Schema subset.
@@ -32,15 +33,17 @@ func ValidateManifestStruct(m *PluginManifest) error {
 			return fmt.Errorf("manifest validation failed: entry.type must be 'stdio' when commands are empty")
 		}
 	} else {
+		// Steps validation (optional)
 		for i, c := range m.Commands {
-			if c.Name == "" {
-				return fmt.Errorf("manifest validation failed: commands[%d].name is required", i)
-			}
-			if c.Executor != "shell" && c.Executor != "stdio" {
-				return fmt.Errorf("manifest validation failed: commands[%d].executor must be 'shell' or 'stdio'", i)
-			}
-			if c.Program == "" {
-				return fmt.Errorf("manifest validation failed: commands[%d].program is required", i)
+			if len(c.Steps) > 0 {
+				for j, s := range c.Steps {
+					if s.Executor != "shell" && s.Executor != "stdio" {
+						return fmt.Errorf("manifest validation failed: commands[%d].steps[%d].executor must be 'shell' or 'stdio'", i, j)
+					}
+					if strings.TrimSpace(s.Program) == "" {
+						return fmt.Errorf("manifest validation failed: commands[%d].steps[%d].program is required", i, j)
+					}
+				}
 			}
 		}
 	}

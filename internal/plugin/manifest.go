@@ -10,17 +10,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type StepSpec struct {
+	Executor        string            `yaml:"executor"` // shell|stdio
+	Program         string            `yaml:"program"`
+	Args            []string          `yaml:"args"`
+	Workdir         string            `yaml:"workdir"`
+	Env             map[string]string `yaml:"env"`
+	UseStdio        bool              `yaml:"use_stdio"`
+	ContinueOnError bool              `yaml:"continue_on_error"`
+}
+
 type CommandSpec struct {
 	Name       string            `yaml:"name"`
 	Summary    string            `yaml:"summary"`
-	Executor   string            `yaml:"executor"` // shell|stdio
-	Program    string            `yaml:"program"`  // shell: command line; stdio: program path
+	Executor   string            `yaml:"executor"`   // shell|stdio
+	Program    string            `yaml:"program"`
 	Args       []string          `yaml:"args"`
 	Workdir    string            `yaml:"workdir"`
 	Env        map[string]string `yaml:"env"`
 	UseStdio   bool              `yaml:"use_stdio"`
 	LogCapture bool              `yaml:"log_capture"`
+	Steps      []StepSpec        `yaml:"steps"`      // NEW: sequence of sub-commands
 }
+
 
 type EntrySpec struct {
 	Type string   `yaml:"type"` // optional: stdio
