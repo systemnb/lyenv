@@ -48,7 +48,7 @@ func PluginAddLocal(envDir, srcPath, overrideName string) error {
 		return err
 	}
 
-	if err := CreateShims(envDir, man.Name, man.Expose); err != nil {
+	if err := CreateShims(envDir, installName, man.Expose); err != nil {
 		return err
 	}
 
@@ -206,7 +206,7 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 	}
 
 	// Create shims in bin/ for each exposed alias
-	if err := CreateShims(envDir, man.Name, man.Expose); err != nil {
+	if err := CreateShims(envDir, installName, man.Expose); err != nil {
 		return err
 	}
 
