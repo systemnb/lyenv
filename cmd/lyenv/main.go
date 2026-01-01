@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -236,20 +237,6 @@ func main() {
 				os.Exit(1)
 			}
 
-		case "list":
-			r, err := plugin.LoadRegistry(".")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Plugin list failed: %v\n", err)
-				os.Exit(1)
-			}
-			if len(r.Plugins) == 0 {
-				fmt.Println("No plugins installed.")
-			} else {
-				for _, p := range r.Plugins {
-					fmt.Printf("%s  %s  (%s)\n", p.Name, p.Version, p.Source)
-				}
-			}
-
 		case "info":
 			if len(args) != 3 {
 				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin info <NAME>")
@@ -289,7 +276,46 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Printf("Plugin removed: %s\n", installName)
-		
+
+		case "update":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin update <INSTALL_NAME> [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
+				os.Exit(2)
+			}
+			installName := strings.TrimSpace(args[2])
+			flags := config.ParseFlags(args[3:])
+			repo := flags["repo"]
+			ref := flags["ref"]
+			source := flags["source"]
+			proxy := flags["proxy"]
+			if err := plugin.PluginUpdate(".", installName, repo, ref, source, proxy); err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin update failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Plugin updated: %s\n", installName)
+	
+		case "list":
+			flags := config.ParseFlags(args[2:])
+			wantJSON := flags["json"] == "1"
+			r, err := plugin.LoadRegistry(".")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin list failed: %v\n", err)
+				os.Exit(1)
+			}
+			if wantJSON {
+				b, _ := json.MarshalIndent(r.Plugins, "", "  ")
+				fmt.Println(string(b))
+			} else {
+				if len(r.Plugins) == 0 {
+					fmt.Println("No plugins installed.")
+				} else {
+					for _, p := range r.Plugins {
+						fmt.Printf("%s  %s  (%s)  install=%s  shims=%v\n",
+							p.Name, p.Version, p.Source, p.InstallName, p.Shims)
+					}
+				}
+			}
+	
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown plugin subcommand: %s\n", sub)
 			os.Exit(2)

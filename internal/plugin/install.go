@@ -44,6 +44,9 @@ func PluginAddLocal(envDir, srcPath, overrideName string) error {
 	if err != nil {
 		return err
 	}
+	if err := ValidateManifestStruct(man); err != nil {
+		return err
+	}
 
 	if err := CreateShims(envDir, man.Name, man.Expose); err != nil {
 		return err
@@ -196,6 +199,9 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 	// Load manifest and validate minimal fields
 	man, err := LoadManifest(targetDir)
 	if err != nil {
+		return err
+	}
+	if err := ValidateManifestStruct(man); err != nil {
 		return err
 	}
 
