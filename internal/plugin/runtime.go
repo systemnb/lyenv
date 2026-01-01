@@ -225,8 +225,8 @@ func spawnStdio(spec *CommandSpec, pluginDir string, req map[string]interface{},
 
 	// Build the command with args (stdio protocol expects JSON on stdin)
 	args := append(spec.Args, []string{}...)
+	writeLogLine(w, map[string]interface{}{"level": "debug", "message": "spawn stdio", "entry": entry, "args": args, "workdir": spec.Workdir})
 	cmd := exec.Command(entry, args...)
-	writeLogLine(w, map[string]interface{}{"level": "debug", "message": "spawn stdio", "entry": entry, "args": args, "workdir": cmd.Dir})
 	cmd.Dir = dirOr(pluginDir, spec.Workdir)
 	cmd.Env = withExtraEnv(os.Environ(), spec.Env)
 	cmd.Stderr = newLogWriter(w, "stderr")
