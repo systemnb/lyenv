@@ -9,15 +9,28 @@ import (
 	"time"
 )
 
+func DefaultLyenvYAML() string {
+	return `version: "1.0"
+config:
+  network:
+    proxy_url: ""
+  workspace:
+    root: "./workspace"
+  logs:
+    dispatch_dir: ".lyenv/logs"
+plugins:
+  registry_url: "https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml"
+  registry_format: "yaml"
+  default_version_strategy: "latest"
+`
+}
+
 // cmdCreate creates the directory structure for a lyenv environment.
 func CmdCreate(dir string) error {
 	absDir, errAbs := filepath.Abs(dir)
 	if errAbs != nil {
 		return fmt.Errorf("failed to resolve target path: %w", errAbs)
 	}
-
-	// Debug hint
-	// fmt.Printf("Debug: resolved absolute path: %s\n", absDir)
 
 	// Check if target exists
 	fi, errStat := os.Stat(absDir)
@@ -66,7 +79,12 @@ func CmdCreate(dir string) error {
 		return fmt.Errorf("failed to write .lyenv/state.json: %w", err)
 	}
 
-	// Default environment configuration
+	// Initialize registry file (empty list)
+	if err := WriteFileIfNotExists(filepath.Join(absDir, ".lyenv", "registry", "installed.yaml"), "plugins: []\n", 0o644); err != nil {
+		return fmt.Errorf("failed to write .lyenv/registry/installed.yaml: %w", err)
+	}
+
+	// Default environment configuration (augmented with plugin center settings)
 	defaultCfg := `env:
   name: "default"
   platform: "auto"        # auto-detect system platform
@@ -76,6 +94,9 @@ path:
   workspace: "./workspace"
 plugins:
   installed: []
+  registry_url: "https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml"
+  registry_format: "yaml"
+  default_version_strategy: "latest"
 config:
   use_container: false
   pkg_manager: "auto"     # auto-detect package manager
@@ -88,7 +109,7 @@ config:
 	return nil
 }
 
-// cmdActivate prints a snippet to activate the lyenv environment.
+// CmdInit verifies and repairs the lyenv environment (idempotent).
 func CmdInit(dir string) error {
 	absDir, errAbs := filepath.Abs(dir)
 	if errAbs != nil {
@@ -130,7 +151,10 @@ func CmdInit(dir string) error {
 	statePath := filepath.Join(absDir, ".lyenv", "state.json")
 	_ = EnsureInitializedAt(statePath)
 
-	// Ensure main config exists
+	// Initialize registry file if missing
+	_ = WriteFileIfNotExists(filepath.Join(absDir, ".lyenv", "registry", "installed.yaml"), "plugins: []\n", 0o644)
+
+	// Ensure main config exists (augmented with plugin center settings)
 	defaultCfg := `env:
   name: "default"
   platform: "auto"        # auto-detect system platform
@@ -140,6 +164,9 @@ path:
   workspace: "./workspace"
 plugins:
   installed: []
+  registry_url: "https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml"
+  registry_format: "yaml"
+  default_version_strategy: "latest"
 config:
   use_container: false
   pkg_manager: "auto"     # auto-detect package manager
