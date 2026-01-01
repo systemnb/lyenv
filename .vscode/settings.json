@@ -1,11 +1,16 @@
 {
     "cSpell.words": [
+        "Iface",
         "importjson",
         "importyaml",
+        "jmap",
+        "jval",
         "lyenv",
         "pipefail",
         "pwsh",
         "subdirs",
-        "workdir"
+        "workdir",
+        "ymap",
+        "yval"
     ]
 }

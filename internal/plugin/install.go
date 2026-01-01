@@ -4,13 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-func PluginAddLocal(envDir, srcPath string) error {
+func PluginAddLocal(envDir, srcPath, overrideName string) error {
 	if srcPath == "" {
 		return fmt.Errorf("path must not be empty")
 	}
@@ -28,8 +27,11 @@ func PluginAddLocal(envDir, srcPath string) error {
 	}
 
 	name := filepath.Base(srcPath)
+	if strings.TrimSpace(overrideName) != "" {
+		name = overrideName
+	}
 	targetDir := filepath.Join(pluginsDir, name)
-	_ = os.RemoveAll(targetDir) // overwrite by default
+	_ = os.RemoveAll(targetDir)
 
 	if err := copyDir(srcPath, targetDir); err != nil {
 		return fmt.Errorf("failed to copy plugin dir: %w", err)
@@ -62,7 +64,7 @@ func PluginAddLocal(envDir, srcPath string) error {
 	return nil
 }
 
-func PluginAdd(envDir, src string, optSource string, optRepo string, optRef string, optProxy string) error {
+func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName string) error {
 	pluginsDir := filepath.Join(envDir, "plugins")
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return err
@@ -85,64 +87,12 @@ func PluginAdd(envDir, src string, optSource string, optRepo string, optRef stri
 		name = strings.TrimSuffix(filepath.Base(optRepo), ".git")
 	}
 
+	if strings.TrimSpace(overrideName) != "" {
+		name = overrideName
+	}
+
 	targetDir := filepath.Join(pluginsDir, name)
 	_ = os.RemoveAll(targetDir)
-
-	switch srcType {
-	case "local":
-		if err := copyDir(src, targetDir); err != nil {
-			return fmt.Errorf("failed to install local plugin: %w", err)
-		}
-	case "git":
-		if _, err := exec.LookPath("git"); err != nil {
-			return fmt.Errorf("'git' is not available. Please install git or use --source=<zip url>")
-		}
-		args := []string{"clone"}
-		if optRef != "" {
-			args = append(args, "--branch", optRef)
-		}
-		args = append(args, "--depth", "1", repoURL(optRepo, optProxy), targetDir)
-		cmd := exec.Command("git", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("git clone failed: %w", err)
-		}
-	case "archive":
-		tmp := filepath.Join(os.TempDir(), name+"-plugin.tgz")
-		if err := fetchURL(optSource, tmp, optProxy); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(targetDir, 0o755); err != nil {
-			return err
-		}
-		cmd := exec.Command("tar", "-xzf", tmp, "-C", targetDir, "--strip-components=1")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("tar extract failed: %w", err)
-		}
-	case "url":
-		if strings.HasSuffix(optSource, ".zip") {
-			tmp := filepath.Join(os.TempDir(), name+"-plugin.zip")
-			if err := fetchURL(optSource, tmp, optProxy); err != nil {
-				return err
-			}
-			if err := os.MkdirAll(targetDir, 0o755); err != nil {
-				return err
-			}
-			cmd := exec.Command("unzip", "-o", tmp, "-d", targetDir)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("unzip failed: %w", err)
-			}
-		} else {
-			return fmt.Errorf("unsupported URL type: %s", optSource)
-		}
-	default:
-		return fmt.Errorf("unsupported source type: %s", srcType)
-	}
 
 	man, err := LoadManifest(targetDir)
 	if err != nil {

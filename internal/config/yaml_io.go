@@ -58,15 +58,15 @@ func LoadAny(path string) (map[string]interface{}, error) {
 	return m, nil
 }
 
-func SaveAny(path string, m map[string]interface{}) error {
+func SaveAny(path string, v interface{}) error {
 	var (
 		out []byte
 		err error
 	)
 	if IsJSON(path) {
-		out, err = json.MarshalIndent(m, "", "  ")
+		out, err = json.MarshalIndent(v, "", "  ")
 	} else {
-		out, err = yaml.Marshal(m)
+		out, err = yaml.Marshal(v)
 	}
 	if err != nil {
 		return err

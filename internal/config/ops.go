@@ -63,6 +63,7 @@ func ConfigDump(envDir, cfgFile, key, outFile string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
+
 	var toWrite interface{} = m
 	if key != "" {
 		val, ok := GetByPath(m, key)
@@ -71,11 +72,8 @@ func ConfigDump(envDir, cfgFile, key, outFile string) error {
 		}
 		toWrite = val
 	}
-	out, err := yaml.Marshal(toWrite)
-	if err != nil {
-		return fmt.Errorf("failed to serialize YAML: %w", err)
-	}
-	if err := os.WriteFile(outFile, out, 0o644); err != nil {
+
+	if err := SaveAny(outFile, toWrite); err != nil {
 		return fmt.Errorf("failed to write dump file: %w", err)
 	}
 	return nil
@@ -83,11 +81,13 @@ func ConfigDump(envDir, cfgFile, key, outFile string) error {
 
 func ConfigLoadWithStrategy(envDir, cfgFile, srcFile string, strategy MergeStrategy) error {
 	cfgPath := filepath.Join(envDir, cfgFile)
+
 	base, err := LoadYAML(cfgPath)
 	if err != nil {
 		return fmt.Errorf("failed to read base config: %w", err)
 	}
-	overlay, err := LoadYAML(srcFile)
+
+	overlay, err := LoadAny(srcFile)
 	if err != nil {
 		return fmt.Errorf("failed to read source config: %w", err)
 	}
@@ -98,6 +98,7 @@ func ConfigLoadWithStrategy(envDir, cfgFile, srcFile string, strategy MergeStrat
 	}
 	return nil
 }
+
 
 // Import a value from JSON file and write into lyenv.yaml, supporting type and merge strategy.
 func ConfigImportJSON(envDir, cfgFile, jsonFile, jsonKey, destKey, typeOpt string, strategy MergeStrategy, inputOn bool) error {

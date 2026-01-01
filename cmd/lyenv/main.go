@@ -202,18 +202,20 @@ func main() {
 		switch sub {
 		case "add":
 			if len(args) != 3 {
-				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin add <PATH>")
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin add <PATH> [--name=<INSTALL_NAME>]")
 				os.Exit(2)
 			}
 			path := strings.TrimSpace(args[2])
-			if err := plugin.PluginAddLocal(".", path); err != nil {
+			flags := config.ParseFlags(args[3:])
+			overrideName := flags["name"]
+			if err := plugin.PluginAddLocal(".", path, overrideName); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
 				os.Exit(1)
 			}
 	
 		case "install":
 			if len(args) < 3 {
-				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin install <NAME|PATH> [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin install <NAME|PATH> [--name=<INSTALL_NAME>] [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
 				os.Exit(2)
 			}
 			nameOrPath := strings.TrimSpace(args[2])
@@ -222,10 +224,12 @@ func main() {
 			ref := flags["ref"]
 			source := flags["source"]
 			proxy := flags["proxy"]
-			if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy); err != nil {
+			overrideName := flags["name"]
+			if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
 				os.Exit(1)
 			}
+	
 		case "list":
 			r, err := plugin.LoadRegistry(".")
 			if err != nil {
@@ -239,6 +243,7 @@ func main() {
 					fmt.Printf("%s  %s  (%s)\n", p.Name, p.Version, p.Source)
 				}
 			}
+	
 		case "info":
 			if len(args) != 3 {
 				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin info <NAME>")
@@ -264,19 +269,19 @@ func main() {
 					fmt.Printf("  - %s\n", s)
 				}
 			}
+	
 		case "remove":
 			if len(args) != 3 {
 				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin remove <NAME>")
 				os.Exit(2)
 			}
 			name := strings.TrimSpace(args[2])
-			dir := filepath.Join(".", "plugins", name)
-			if err := os.RemoveAll(dir); err != nil {
+			if err := plugin.PluginRemove(".", name); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin remove failed: %v\n", err)
 				os.Exit(1)
 			}
 			fmt.Printf("Plugin removed: %s\n", name)
-		
+	
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown plugin subcommand: %s\n", sub)
 			os.Exit(2)
