@@ -81,30 +81,44 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		return err
 	}
 
-	// Decide source type and default install name
-	var srcType string // local|git|archive|url
 	var name string
+	var srcType string // local|git|archive|url|git-subpath
 
-	// Local path: "./..." or "/..."; also allow relative non-empty path that exists
+	// Case 1: explicit local path
 	if src != "" && (strings.HasPrefix(src, ".") || filepath.IsAbs(src)) {
 		if st, err := os.Stat(src); err == nil && st.IsDir() {
 			srcType = "local"
 			name = filepath.Base(src)
 		}
 	}
-	// Explicit source URL (zip/tgz)
+
+	// Case 2: explicit source URL (zip/tgz)
 	if srcType == "" && strings.TrimSpace(optSource) != "" {
 		srcType = detectSourceType(optSource)
 		name = inferNameFromSource(optSource)
 	}
-	// Git repo (org/repo)
+
+	// Case 3: explicit repo (org/repo)
 	if srcType == "" && strings.TrimSpace(optRepo) != "" {
 		srcType = "git"
 		name = strings.TrimSuffix(filepath.Base(optRepo), ".git")
 	}
-	// If still unknown, error out clearly
+
+	// Case 4: center resolution when only NAME provided
+	if srcType == "" && src != "" {
+		rec, err := ResolveFromCenterMonorepo(envDir, strings.TrimSpace(src), strings.TrimSpace(optRef))
+		if err != nil {
+			return fmt.Errorf("failed to resolve from plugin center: %w", err)
+		}
+		srcType = "git-subpath"
+		optRepo = rec.Repo
+		optRef = rec.Ref
+		src = rec.Subpath // reuse src to carry subpath
+		name = filepath.Base(rec.Subpath)
+	}
+
 	if srcType == "" {
-		return errors.New("missing source: provide a local path, or --repo=<org/repo>, or --source=<url>")
+		return errors.New("missing source: provide <PATH>, or --repo=<org/repo>, or --source=<url>, or configure plugin center")
 	}
 
 	// Apply custom install name (sanitized)
@@ -113,8 +127,9 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 	}
 	installName := name
 	targetDir := filepath.Join(pluginsDir, installName)
+	_ = os.RemoveAll(targetDir)
 
-	// Proxy fallback from lyenv.yaml (config.network.proxy_url)
+	// Proxy fallback from lyenv.yaml if not provided
 	if strings.TrimSpace(optProxy) == "" {
 		cfg, _ := config.LoadYAML(filepath.Join(envDir, "lyenv.yaml"))
 		if v, ok := config.GetByPath(cfg, "config.network.proxy_url"); ok {
@@ -124,28 +139,21 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		}
 	}
 
-	// Overwrite existing installation directory
-	_ = os.RemoveAll(targetDir)
-
 	switch srcType {
 	case "local":
-		// Copy entire directory into plugins/<installName>/
 		if err := copyDir(src, targetDir); err != nil {
 			return fmt.Errorf("failed to install local plugin: %w", err)
 		}
 
 	case "git":
-		// Require git available
 		if _, err := exec.LookPath("git"); err != nil {
-			return fmt.Errorf("'git' is not available. Please install git or use --source=<zip|tgz url>")
+			return fmt.Errorf("'git' is not available. Please install git or use --source=<zip url>")
 		}
-		// Build clone command with optional ref
 		args := []string{"clone"}
 		if strings.TrimSpace(optRef) != "" {
 			args = append(args, "--branch", strings.TrimSpace(optRef))
 		}
 		args = append(args, "--depth", "1", repoURL(optRepo, optProxy), targetDir)
-
 		cmd := exec.Command("git", args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -153,18 +161,26 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 			return fmt.Errorf("git clone failed: %w", err)
 		}
 
+	case "git-subpath":
+		work, err := cloneSparseSubpath("https://github.com/"+strings.TrimSpace(optRepo), strings.TrimSpace(optRef), optProxy)
+		if err != nil {
+			return err
+		}
+		subAbs := filepath.Join(work, src)
+		if _, err := os.Stat(subAbs); err != nil {
+			return fmt.Errorf("subpath not found in monorepo: %s", src)
+		}
+		if err := copyDir(subAbs, targetDir); err != nil {
+			return fmt.Errorf("failed to copy subpath to target: %w", err)
+		}
+
 	case "archive":
-		// Expect .tar.gz / .tgz
 		tmp := filepath.Join(os.TempDir(), installName+"-plugin.tgz")
 		if err := fetchURL(optSource, tmp, optProxy); err != nil {
 			return err
 		}
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
-		}
-		// Extract archive into targetDir (strip top-level directory)
-		if _, err := exec.LookPath("tar"); err != nil {
-			return fmt.Errorf("'tar' is not available")
 		}
 		cmd := exec.Command("tar", "-xzf", tmp, "-C", targetDir, "--strip-components=1")
 		cmd.Stdout = os.Stdout
@@ -174,9 +190,8 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		}
 
 	case "url":
-		// Support .zip URLs; download and unzip
 		if !strings.HasSuffix(strings.ToLower(optSource), ".zip") {
-			return fmt.Errorf("unsupported URL type: %s (only .zip supported here)", optSource)
+			return fmt.Errorf("unsupported URL type: %s (only .zip supported)", optSource)
 		}
 		tmp := filepath.Join(os.TempDir(), installName+"-plugin.zip")
 		if err := fetchURL(optSource, tmp, optProxy); err != nil {
@@ -184,9 +199,6 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		}
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
-		}
-		if _, err := exec.LookPath("unzip"); err != nil {
-			return fmt.Errorf("'unzip' is not available")
 		}
 		cmd := exec.Command("unzip", "-o", tmp, "-d", targetDir)
 		cmd.Stdout = os.Stdout
@@ -199,7 +211,11 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		return fmt.Errorf("unsupported source type: %s", srcType)
 	}
 
-	// Load manifest and validate minimal fields
+	// Normalize permissions and ensure logs dir
+	_ = NormalizePluginPermissions(targetDir)
+	_ = EnsureLogsDir(targetDir)
+
+	// Load manifest
 	man, err := LoadManifest(targetDir)
 	if err != nil {
 		return err
@@ -208,32 +224,29 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		return err
 	}
 
-	_ = NormalizePluginPermissions(targetDir)
-	_ = EnsureLogsDir(targetDir)
-
-	// Create shims in bin/ for each exposed alias
+	// Create shims bound to installName
 	if err := CreateShims(envDir, installName, man.Expose); err != nil {
 		return err
 	}
 
-	// Record installation into registry with richer metadata
+	// Register installation
 	ip := InstalledPlugin{
 		Name:        man.Name,
 		InstallName: installName,
 		Version:     man.Version,
-		Source:      map[string]string{"local": "local", "git": "git", "archive": "archive", "url": "url"}[srcType],
+		Source:      srcType,
 		Ref:         strings.TrimSpace(optRef),
 		Shims:       man.Expose,
 		InstalledAt: time.Now().UTC(),
 	}
-	if srcType == "git" {
-		ip.Source = repoURL(optRepo, optProxy) // store resolved URL (with proxy prefix when any)
+	// For git-subpath, store repo URL for info
+	if srcType == "git-subpath" {
+		ip.Source = "https://github.com/" + strings.TrimSpace(optRepo)
 	}
 	if err := RegisterInstall(envDir, ip); err != nil {
 		return err
 	}
 
-	// Success output (English)
 	fmt.Println("Plugin installed successfully.")
 	for _, e := range man.Expose {
 		fmt.Printf("Executable generated: bin/%s\n", e)
