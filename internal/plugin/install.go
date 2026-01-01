@@ -83,6 +83,7 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 
 	var name string
 	var srcType string // local|git|archive|url|git-subpath
+	var centerSha256 string
 
 	// Case 1: explicit local path
 	if src != "" && (strings.HasPrefix(src, ".") || filepath.IsAbs(src)) {
@@ -110,11 +111,19 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		if err != nil {
 			return fmt.Errorf("failed to resolve from plugin center: %w", err)
 		}
-		srcType = "git-subpath"
-		optRepo = rec.Repo
-		optRef = rec.Ref
-		src = rec.Subpath // reuse src to carry subpath
-		name = filepath.Base(rec.Subpath)
+
+		if strings.TrimSpace(rec.Source) != "" {
+			srcType = detectSourceType(rec.Source) // "url" for .zip, "archive" for .tgz
+			optSource = rec.Source
+			centerSha256 = strings.TrimSpace(rec.Sha256)
+			name = filepath.Base(strings.TrimSuffix(strings.TrimSuffix(rec.Source, ".zip"), ".tgz"))
+		} else {
+			srcType = "git-subpath"
+			optRepo = rec.Repo
+			optRef = rec.Ref
+			src = rec.Subpath
+			name = filepath.Base(rec.Subpath)
+		}
 	}
 
 	if srcType == "" {
@@ -179,6 +188,13 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		if err := fetchURL(optSource, tmp, optProxy); err != nil {
 			return err
 		}
+
+		if strings.TrimSpace(centerSha256) != "" {
+			if err := VerifySHA256(tmp, centerSha256); err != nil {
+				return err
+			}
+		}
+
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
 		}
@@ -197,6 +213,13 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 		if err := fetchURL(optSource, tmp, optProxy); err != nil {
 			return err
 		}
+
+		if strings.TrimSpace(centerSha256) != "" {
+			if err := VerifySHA256(tmp, centerSha256); err != nil {
+				return err
+			}
+		}
+
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
 		}

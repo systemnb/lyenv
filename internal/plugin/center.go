@@ -14,7 +14,8 @@ type CenterRecord struct {
 	Repo    string
 	Ref     string
 	Subpath string
-	Source  string // optional download URL (zip/tgz) if used later
+	Source  string   // optional: archive URL (.zip/.tgz)
+    Sha256  string   // optional: expected sha256 for Source
 	Shims   []string
 }
 
@@ -24,7 +25,7 @@ type CenterRecord struct {
 func ResolveFromCenterMonorepo(envDir, name, wantVersion string) (*CenterRecord, error) {
 	cfg, err := config.LoadYAML(filepath.Join(envDir, "lyenv.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read lyenv.yaml: %w")
+		return nil, fmt.Errorf("failed to read lyenv.yaml: %w", err)
 	}
 	v, ok := config.GetByPath(cfg, "plugins.registry_url")
 	if !ok {
@@ -76,33 +77,40 @@ func ResolveFromCenterMonorepo(envDir, name, wantVersion string) (*CenterRecord,
 	}
 
 	if vMapRaw, ok := entry["versions"].(map[string]interface{}); ok && len(vMapRaw) > 0 {
-		versionKey := wantVersion
-		if strings.TrimSpace(versionKey) == "" {
-			versionKey = pickLatestVersionKey(vMapRaw)
-		}
-		vEntry, ok := vMapRaw[versionKey].(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("version not found: %s@%s", name, versionKey)
-		}
-		repo = nonEmpty(asString(vEntry["repo"]), repo)
-		ref = nonEmpty(asString(vEntry["ref"]), ref)
-		subpath = nonEmpty(asString(vEntry["subpath"]), subpath)
-		if sArr2, ok := vEntry["shims"].([]interface{}); ok {
-			shims = shims[:0]
-			for _, x := range sArr2 {
-				shims = append(shims, fmt.Sprint(x))
-			}
-		}
-	}
+        versionKey := wantVersion
+        if strings.TrimSpace(versionKey) == "" {
+            versionKey = pickLatestVersionKey(vMapRaw)
+        }
+        vEntry, ok := vMapRaw[versionKey].(map[string]interface{})
+        if !ok {
+            return nil, fmt.Errorf("version not found: %s@%s", name, versionKey)
+        }
+        repo = nonEmpty(asString(vEntry["repo"]), repo)
+        ref = nonEmpty(asString(vEntry["ref"]), ref)
+        subpath = nonEmpty(asString(vEntry["subpath"]), subpath)
+        source := asString(vEntry["source"])
+        sha256 := asString(vEntry["sha256"])
 
-	if strings.TrimSpace(repo) == "" || strings.TrimSpace(subpath) == "" {
-		return nil, fmt.Errorf("registry entry must provide repo and subpath for monorepo: %s", name)
-	}
-	if strings.TrimSpace(ref) == "" {
-		ref = "main"
-	}
+        if sArr2, ok := vEntry["shims"].([]interface{}); ok {
+            shims = shims[:0]
+            for _, x := range sArr2 { shims = append(shims, fmt.Sprint(x)) }
+        }
 
-	return &CenterRecord{Repo: repo, Ref: ref, Subpath: subpath, Shims: shims}, nil
+        if strings.TrimSpace(source) != "" {
+            return &CenterRecord{
+                Source: source,
+                Sha256: sha256,
+                Shims:  shims,
+            }, nil
+        }
+    }
+
+    if strings.TrimSpace(repo) == "" || strings.TrimSpace(subpath) == "" {
+        return nil, fmt.Errorf("registry entry must provide repo and subpath for monorepo: %s", name)
+    }
+    if strings.TrimSpace(ref) == "" { ref = "main" }
+    return &CenterRecord{Repo: repo, Ref: ref, Subpath: subpath, Shims: shims}, nil
+
 }
 
 func asString(v interface{}) string {

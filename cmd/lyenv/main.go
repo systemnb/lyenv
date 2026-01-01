@@ -345,6 +345,44 @@ func main() {
 				}
 			}
 
+		case "search":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin search <KEYWORDS...>")
+				os.Exit(2)
+			}
+			kws := args[2:]
+			res, err := plugin.SearchCenterPlugins(".", kws)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin search failed: %v\n", err)
+				os.Exit(1)
+			}
+			if len(res) == 0 {
+				fmt.Println("No matches.")
+			} else {
+				for _, line := range res {
+					fmt.Println(line)
+				}
+			}
+
+		case "center":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin center sync")
+				os.Exit(2)
+			}
+			sub2 := args[2]
+			switch sub2 {
+			case "sync":
+				p, err := plugin.CenterSync(".")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Center sync failed: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("Center index cached: %s\n", p)
+			default:
+				fmt.Fprintf(os.Stderr, "Unknown plugin center subcommand: %s\n", sub2)
+				os.Exit(2)
+			}
+
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown plugin subcommand: %s\n", sub)
 			os.Exit(2)
