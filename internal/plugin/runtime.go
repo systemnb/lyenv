@@ -209,7 +209,21 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 // ---- executors ----
 
 func spawnStdio(spec *CommandSpec, pluginDir string, req map[string]interface{}, w *bufio.Writer) (map[string]interface{}, int) {
-	entry := filepath.Join(pluginDir, spec.Program)
+	// Decide entry path:
+	// - If spec.Program is absolute ("/..."), use as-is.
+	// - If spec.Program has NO path separator, treat as a system command (e.g., "python3") and use as-is.
+	// - Otherwise, treat as plugin-relative path and join with pluginDir.
+	entry := spec.Program
+	if filepath.IsAbs(spec.Program) {
+		// absolute path, keep as-is
+	} else if strings.ContainsRune(spec.Program, os.PathSeparator) {
+		// plugin-relative path
+		entry = filepath.Join(pluginDir, spec.Program)
+	} else {
+		// bare command name (e.g., "python3"), keep as-is
+	}
+
+	// Build the command with args (stdio protocol expects JSON on stdin)
 	args := append(spec.Args, []string{}...)
 	cmd := exec.Command(entry, args...)
 	cmd.Dir = dirOr(pluginDir, spec.Workdir)
@@ -220,21 +234,20 @@ func spawnStdio(spec *CommandSpec, pluginDir string, req map[string]interface{},
 
 	if err := cmd.Start(); err != nil {
 		writeLogLine(w, map[string]interface{}{"level": "error", "message": "start failed", "error": err.Error()})
-		return map[string]interface{}{"status": "error", "message": err.Error()}, 1
+		return map[string]interface{}{"status": "error", "message": err.Error()}, exitCode(err)
 	}
 	enc := json.NewEncoder(stdin)
 	_ = enc.Encode(req)
-	stdin.Close()
+	_ = stdin.Close()
 
 	var resp map[string]interface{}
 	dec := json.NewDecoder(stdout)
 	if err := dec.Decode(&resp); err != nil {
 		writeLogLine(w, map[string]interface{}{"level": "error", "message": "resp decode failed", "error": err.Error()})
-		return map[string]interface{}{"status": "error", "message": err.Error()}, 1
+		return map[string]interface{}{"status": "error", "message": err.Error()}, exitCode(err)
 	}
 	err := cmd.Wait()
-	exit := exitCode(err)
-	return resp, exit
+	return resp, exitCode(err)
 }
 
 func runShell(spec *CommandSpec, pluginDir string, passArgs []string, w *bufio.Writer) int {
