@@ -3,6 +3,7 @@ package plugin
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,8 +52,12 @@ func ResolvePluginDir(envDir, name string) (pluginDir string, installName string
 
 // RunPluginCommand executes a plugin command (single or multi-step) with logging and config mutations.
 // It accepts either the install name (preferred) or the manifest logical name as `pluginName`.
-func RunPluginCommand(envDir, pluginName, command string, passArgs []string, strategy MergeStrategy) error {
-	// Resolve plugin directory (install name or logical name)
+// RunPluginCommand executes a plugin command (single or multi-step) with logging, config mutations,
+// global timeout and fail-fast/keep-going policy.
+// - ctx: global context; cancellation or deadline applies to all steps.
+// - keepGoing: when true, multi-step execution continues on errors; when false (fail-fast), it stops at first failure.
+func RunPluginCommand(ctx context.Context, envDir, pluginName, command string, passArgs []string, strategy MergeStrategy, keepGoing bool) error {
+	// Resolve plugin directory (install name or manifest logical name)
 	pluginDir, resolvedInstall, err := ResolvePluginDir(envDir, pluginName)
 	if err != nil {
 		return err
@@ -120,10 +125,12 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 
 	// Start dispatch logging
 	writeLogLine(w, map[string]interface{}{
-		"level":   "info",
-		"message": "dispatch start",
-		"action":  command,
-		"args":    passArgs,
+		"level":     "info",
+		"message":   "dispatch start",
+		"action":    command,
+		"args":      passArgs,
+		"timeout":   ctxTimeoutSeconds(ctx), // for insight
+		"keepGoing": keepGoing,
 	})
 	start := time.Now()
 
@@ -156,6 +163,14 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	var exitCode int
 	var resp map[string]interface{}
 
+	// Handle global context cancellation early
+	select {
+	case <-ctx.Done():
+		writeLogLine(w, map[string]interface{}{"level": "error", "message": "dispatch canceled before start", "error": ctx.Err().Error()})
+		return fmt.Errorf("canceled: %w", ctx.Err())
+	default:
+	}
+
 	// Multi-step execution
 	if len(spec.Steps) > 0 {
 		writeLogLine(w, map[string]interface{}{
@@ -164,14 +179,29 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 			"steps":   len(spec.Steps),
 		})
 		for idx, st := range spec.Steps {
+			// Apply global keepGoing override
+			stepContinue := st.ContinueOnError || keepGoing
+
+			// Check context per step
+			if err := ctx.Err(); err != nil {
+				writeLogLine(w, map[string]interface{}{
+					"level":      "error",
+					"message":    "step skipped due to context error",
+					"step_index": idx,
+					"error":      err.Error(),
+				})
+				return fmt.Errorf("canceled or timeout: %w", err)
+			}
+
 			stepStart := time.Now()
 			writeLogLine(w, map[string]interface{}{
-				"level":      "info",
-				"message":    "step start",
-				"step_index": idx,
-				"executor":   st.Executor,
-				"program":    st.Program,
-				"args":       st.Args,
+				"level":             "info",
+				"message":           "step start",
+				"step_index":        idx,
+				"executor":          st.Executor,
+				"program":           st.Program,
+				"args":              st.Args,
+				"continue_on_error": stepContinue,
 			})
 
 			resp = nil
@@ -186,7 +216,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 					Workdir:  st.Workdir,
 					Env:      st.Env,
 				}
-				exitCode = runShell(tmp, pluginDir, []string{}, w)
+				exitCode = runShell(ctx, tmp, pluginDir, []string{}, w)
 
 			case "stdio":
 				tmp := &CommandSpec{
@@ -197,7 +227,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 					Env:      st.Env,
 					UseStdio: true,
 				}
-				resp, exitCode = spawnStdio(tmp, pluginDir, req, w)
+				resp, exitCode = spawnStdio(ctx, tmp, pluginDir, req, w)
 
 			default:
 				writeLogLine(w, map[string]interface{}{
@@ -218,7 +248,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 						"step_index": idx,
 						"error":      fmt.Sprintf("%v", resp["message"]),
 					})
-					if !st.ContinueOnError {
+					if !stepContinue {
 						return fmt.Errorf("plugin error: %v", resp["message"])
 					}
 				}
@@ -238,7 +268,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 						fmt.Println("Plugin local config updated.")
 					}
 				}
-				// Optional: echo stdio logs/artifacts for user
+				// Optional: echo stdio logs/artifacts
 				if logs, ok := resp["logs"].([]interface{}); ok {
 					for _, l := range logs {
 						fmt.Println(fmt.Sprint(l))
@@ -259,7 +289,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 				"duration_ms": stepDur,
 				"exit_code":   exitCode,
 			})
-			if exitCode != 0 && !st.ContinueOnError {
+			if exitCode != 0 && !stepContinue {
 				return fmt.Errorf("plugin step exit code: %d", exitCode)
 			}
 		}
@@ -284,10 +314,10 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	case "stdio":
 		// Pass args to stdio program if needed, and also via req["args"]
 		spec.Args = append(spec.Args, passArgs...)
-		resp, exitCode = spawnStdio(spec, pluginDir, req, w)
+		resp, exitCode = spawnStdio(ctx, spec, pluginDir, req, w)
 
 	case "shell":
-		exitCode = runShell(spec, pluginDir, passArgs, w)
+		exitCode = runShell(ctx, spec, pluginDir, passArgs, w)
 
 	default:
 		writeLogLine(w, map[string]interface{}{"level": "error", "message": "unsupported executor", "executor": spec.Executor})
@@ -303,7 +333,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 			if g, ok := muts["global"].(map[string]interface{}); ok {
 				merged := config.MergeMapWithStrategy(globalCfg, g, strategy)
 				if err := config.SaveYAML(filepath.Join(envDir, "lyenv.yaml"), merged); err != nil {
-					return fmt.Errorf("failed to write global config: %w", err)
+					return fmt.Errorf("failed to write merged global config: %w", err)
 				}
 				fmt.Printf("Global config updated (strategy=%s).\n", strategy)
 			}
@@ -356,9 +386,22 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	return nil
 }
 
+// ctxTimeoutSeconds renders remaining timeout for logging (best-effort).
+func ctxTimeoutSeconds(ctx context.Context) int64 {
+	d, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	rem := time.Until(d)
+	if rem <= 0 {
+		return 0
+	}
+	return int64(rem.Seconds())
+}
+
 // ---- executors ----
 
-func spawnStdio(spec *CommandSpec, pluginDir string, req map[string]interface{}, w *bufio.Writer) (map[string]interface{}, int) {
+func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req map[string]interface{}, w *bufio.Writer) (map[string]interface{}, int) {
 	// Decide entry path:
 	entry := spec.Program
 	if filepath.IsAbs(spec.Program) {
@@ -407,9 +450,9 @@ func spawnStdio(spec *CommandSpec, pluginDir string, req map[string]interface{},
 	var cmd *exec.Cmd
 	if useInterpreter && interp != "" && scriptPath != "" {
 		fullArgs := append(args, scriptPath)
-		cmd = exec.Command(interp, fullArgs...)
+		cmd = exec.CommandContext(ctx, interp, fullArgs...)
 	} else {
-		cmd = exec.Command(entry, args...)
+		cmd = exec.CommandContext(ctx, entry, args...)
 	}
 
 	cmd.Dir = dirOr(pluginDir, spec.Workdir)
@@ -447,7 +490,7 @@ func spawnStdio(spec *CommandSpec, pluginDir string, req map[string]interface{},
 	return resp, exitCode(err)
 }
 
-func runShell(spec *CommandSpec, pluginDir string, passArgs []string, w *bufio.Writer) int {
+func runShell(ctx context.Context, spec *CommandSpec, pluginDir string, passArgs []string, w *bufio.Writer) int {
 	line := strings.TrimSpace(spec.Program)
 	if line == "" && len(spec.Args) > 0 {
 		line = strings.Join(spec.Args, " ")
@@ -455,7 +498,7 @@ func runShell(spec *CommandSpec, pluginDir string, passArgs []string, w *bufio.W
 	if len(passArgs) > 0 {
 		line = strings.TrimSpace(line + " " + strings.Join(passArgs, " "))
 	}
-	cmd := exec.Command("bash", "-c", line)
+	cmd := exec.CommandContext(ctx, "bash", "-c", line)
 	cmd.Dir = dirOr(pluginDir, spec.Workdir)
 	cmd.Env = withExtraEnv(os.Environ(), spec.Env)
 	cmd.Stdout = newLogWriter(w, "stdout")

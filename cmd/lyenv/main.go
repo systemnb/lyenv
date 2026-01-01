@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"lyenv/internal/cli"
 	"lyenv/internal/config"
@@ -366,7 +369,30 @@ func main() {
 		flags := config.ParseFlags(rawFlags)
 		strategy := config.ParseMergeStrategy(flags["merge"])
 
-		if err := plugin.RunPluginCommand(".", pl, cmd, passArgs, strategy); err != nil {
+		// Parse timeout
+		timeoutSec := int64(0)
+		if v := strings.TrimSpace(flags["timeout"]); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				timeoutSec = n
+			}
+		}
+
+		// Parse fail-fast / keep-going
+		keepGoing := flags["keep-going"] == "1"
+		if flags["fail-fast"] == "1" {
+			keepGoing = false
+		}
+
+		// Build context with timeout if provided
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if timeoutSec > 0 {
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+			defer cancel()
+		}
+
+		// Call plugin runtime with options
+		if err := plugin.RunPluginCommand(ctx, ".", pl, cmd, passArgs, strategy, keepGoing); err != nil {
 			fmt.Fprintf(os.Stderr, "Run failed: %v\n", err)
 			os.Exit(1)
 		}
