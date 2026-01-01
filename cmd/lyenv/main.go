@@ -208,13 +208,31 @@ func main() {
 		sub := args[1]
 		switch sub {
 		case "add":
-			if len(args) != 3 {
+			if len(args) < 3 {
 				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin add <PATH> [--name=<INSTALL_NAME>]")
 				os.Exit(2)
 			}
-			path := strings.TrimSpace(args[2])
-			flags := config.ParseFlags(args[3:])
+			// Find first non-flag as PATH
+			var path string
+			var flagArgs []string
+			for _, a := range args[2:] {
+				if strings.HasPrefix(a, "--") {
+					flagArgs = append(flagArgs, a)
+				} else if path == "" {
+					path = a
+				} else {
+					// Extra positional tokens are not expected for 'add'; treat as error
+					fmt.Fprintln(os.Stderr, "Error: too many positional arguments for 'plugin add'")
+					os.Exit(2)
+				}
+			}
+			if path == "" {
+				fmt.Fprintln(os.Stderr, "Error: <PATH> must not be empty")
+				os.Exit(2)
+			}
+			flags := config.ParseFlags(flagArgs)
 			overrideName := flags["name"]
+
 			if err := plugin.PluginAddLocal(".", path, overrideName); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
 				os.Exit(1)
@@ -232,6 +250,11 @@ func main() {
 			source := flags["source"]
 			proxy := flags["proxy"]
 			overrideName := flags["name"]
+
+			if nameOrPath == "" {
+				fmt.Fprintln(os.Stderr, "Error: <NAME|PATH> must not be empty")
+				os.Exit(2)
+			}
 			if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
 				os.Exit(1)
@@ -293,7 +316,7 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Printf("Plugin updated: %s\n", installName)
-	
+
 		case "list":
 			flags := config.ParseFlags(args[2:])
 			wantJSON := flags["json"] == "1"
@@ -315,7 +338,7 @@ func main() {
 					}
 				}
 			}
-	
+
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown plugin subcommand: %s\n", sub)
 			os.Exit(2)
