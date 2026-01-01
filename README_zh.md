@@ -176,4 +176,4 @@ lyenv run <PLUGIN> <COMMAND> [--merge=...] [--timeout=<sec>] [--fail-fast|--keep
 
 ### 9. 许可证
 
-请参见仓库根目录的 `LICENSE` 文件。
+请参见仓库根目录的 [LICENSE](LICENSE) 文件。

@@ -338,7 +338,7 @@ We provide a workflow (`.github/workflows/e2e.yml`) that:
 
 ### 9. License
 
-This project is licensed under the terms in `LICENSE`.
+This project is licensed under the terms in [LICENSE](LICENSE).
 
 ---
 
