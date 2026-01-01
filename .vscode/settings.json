@@ -1,6 +1,9 @@
 {
     "cSpell.words": [
         "lyenv",
-        "subdirs"
+        "pipefail",
+        "pwsh",
+        "subdirs",
+        "workdir"
     ]
 }
