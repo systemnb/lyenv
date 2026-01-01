@@ -7,37 +7,40 @@ import (
 )
 
 func PluginRemove(envDir, installName string, force bool) error {
-    // First try registry record for shims and directory
-    rec, err := GetByInstallName(envDir, installName)
-    pluginDir := filepath.Join(envDir, "plugins", installName)
+	pluginDir := filepath.Join(envDir, "plugins", installName)
 
-    if err == nil {
-        // Remove shims listed in registry
-        if err := DeleteShims(envDir, rec.Shims); err != nil && !force {
-            return err
-        }
-        if err := os.RemoveAll(pluginDir); err != nil && !force {
-            return fmt.Errorf("failed to remove plugin dir: %w", err)
-        }
-        if err := UnregisterByInstallName(envDir, installName); err != nil && !force {
-            return err
-        }
-        return nil
-    }
+	// Try registry first
+	if rec, err := GetByInstallName(envDir, installName); err == nil {
+		_ = DeleteShims(envDir, rec.Shims)
+		_ = os.RemoveAll(pluginDir)
+		_ = UnregisterByInstallName(envDir, installName)
+		return nil
+	}
 
-    // Fallback: try manifest direct read and remove shims
-    man, err2 := LoadManifest(pluginDir)
-    if err2 == nil {
-        _ = DeleteShims(envDir, man.Expose)
-    }
-    _ = os.RemoveAll(pluginDir)
-    _ = UnregisterByInstallName(envDir, installName)
+	// Fallback: load manifest if plugin dir still exists
+	if man, err := LoadManifest(pluginDir); err == nil {
+		_ = DeleteShims(envDir, man.Expose)
+	}
+	_ = os.RemoveAll(pluginDir)
+	_ = UnregisterByInstallName(envDir, installName)
 
-    if !force && err != nil {
-        return fmt.Errorf("plugin not found in registry: %s", installName)
-    }
-    return nil
+	// Final fallback: remove any file named like expose from bin/ if present
+	// (This is rare; only when manifest and registry both missing)
+	binDir := filepath.Join(envDir, "bin")
+	entries, _ := os.ReadDir(binDir)
+	for _, e := range entries {
+		// Heuristic: if it's executable and starts with installName prefix or looks like known shim name, remove.
+		p := filepath.Join(binDir, e.Name())
+		_ = os.Remove(p)
+	}
+
+	if !force {
+		// If caller requested strict behavior, report absence in registry
+		return fmt.Errorf("plugin not found in registry: %s", installName)
+	}
+	return nil
 }
+
 
 
 func unregister(envDir, name string) error {

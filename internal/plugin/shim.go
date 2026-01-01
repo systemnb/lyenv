@@ -54,20 +54,19 @@ lyenv run %s $args
 	return os.WriteFile(shimPath, []byte(content), 0o644)
 }
 
-
-
 func DeleteShims(envDir string, expose []string) error {
-    binDir := filepath.Join(envDir, "bin")
-    for _, name := range expose {
-        paths := []string{
-            filepath.Join(binDir, name),
-            filepath.Join(binDir, name+".cmd"),
-            filepath.Join(binDir, name+".ps1"),
-        }
-        for _, p := range paths {
-            _ = os.Remove(p)
-        }
-    }
-    return nil
+	binDir := filepath.Join(envDir, "bin")
+	for _, name := range expose {
+		paths := []string{
+			filepath.Join(binDir, name),
+			filepath.Join(binDir, name+".cmd"),
+			filepath.Join(binDir, name+".ps1"),
+		}
+		for _, p := range paths {
+			// Remove file or symlink; ignore errors best-effort
+			_ = os.Remove(p)
+			_ = os.RemoveAll(p) // in case it was a dir or odd structure
+		}
+	}
+	return nil
 }
-
