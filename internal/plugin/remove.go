@@ -3,35 +3,42 @@ package plugin
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
+	"path/filepath"	
 )
 
-func PluginRemove(envDir, name string) error {
-	pluginDir := filepath.Join(envDir, "plugins", name)
-	man, err := LoadManifest(pluginDir)
-	if err != nil {
-		if os.IsNotExist(err) || strings.Contains(err.Error(), "not found") {
-			_ = os.RemoveAll(pluginDir)
-			_ = unregister(envDir, name)
-			return fmt.Errorf("manifest not found; plugin directory removed. Note: shims may remain in bin/")
-		}
-		return err
-	}
+func PluginRemove(envDir, installName string, force bool) error {
+    // First try registry record for shims and directory
+    rec, err := GetByInstallName(envDir, installName)
+    pluginDir := filepath.Join(envDir, "plugins", installName)
 
-	if err := DeleteShims(envDir, man.Expose); err != nil {
-		return err
-	}
+    if err == nil {
+        // Remove shims listed in registry
+        if err := DeleteShims(envDir, rec.Shims); err != nil && !force {
+            return err
+        }
+        if err := os.RemoveAll(pluginDir); err != nil && !force {
+            return fmt.Errorf("failed to remove plugin dir: %w", err)
+        }
+        if err := UnregisterByInstallName(envDir, installName); err != nil && !force {
+            return err
+        }
+        return nil
+    }
 
-	if err := os.RemoveAll(pluginDir); err != nil {
-		return fmt.Errorf("failed to remove plugin dir: %w", err)
-	}
+    // Fallback: try manifest direct read and remove shims
+    man, err2 := LoadManifest(pluginDir)
+    if err2 == nil {
+        _ = DeleteShims(envDir, man.Expose)
+    }
+    _ = os.RemoveAll(pluginDir)
+    _ = UnregisterByInstallName(envDir, installName)
 
-	if err := unregister(envDir, man.Name); err != nil {
-		return err
-	}
-	return nil
+    if !force && err != nil {
+        return fmt.Errorf("plugin not found in registry: %s", installName)
+    }
+    return nil
 }
+
 
 func unregister(envDir, name string) error {
 	r, err := LoadRegistry(envDir)

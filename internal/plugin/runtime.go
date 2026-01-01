@@ -153,9 +153,20 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 		}
 	}
 
+	status := "ok"
 	if exitCode != 0 {
-		return fmt.Errorf("plugin command exit code: %d", exitCode)
+		status = "error"
 	}
+	writeDispatchLog(envDir, DispatchRecord{
+		Plugin:     pluginName,
+		Command:    command,
+		Args:       passArgs,
+		Status:     status,
+		LogFile:    logFile,
+		DurationMS: dur,
+	})
+	fmt.Printf("Plugin log: %s\n", logFile)
+
 	return nil
 }
 

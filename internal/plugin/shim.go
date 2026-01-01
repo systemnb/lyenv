@@ -55,16 +55,17 @@ lyenv run %s $args
 }
 
 func DeleteShims(envDir string, expose []string) error {
-	binDir := filepath.Join(envDir, "bin")
-	for _, name := range expose {
-		paths := []string{
-			filepath.Join(binDir, name),
-			filepath.Join(binDir, name+".cmd"),
-			filepath.Join(binDir, name+".ps1"),
-		}
-		for _, p := range paths {
-			_ = os.Remove(p)
-		}
-	}
-	return nil
+    binDir := filepath.Join(envDir, "bin")
+    for _, name := range expose {
+        paths := []string{
+            filepath.Join(binDir, name),
+            filepath.Join(binDir, name+".cmd"),
+            filepath.Join(binDir, name+".ps1"),
+        }
+        for _, p := range paths {
+            _ = os.Remove(p)
+        }
+    }
+    return nil
 }
+

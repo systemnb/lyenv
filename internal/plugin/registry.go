@@ -10,10 +10,16 @@ import (
 )
 
 type InstalledPlugin struct {
-	Name        string    `yaml:"name"`
+	// Manifest name inside plugin (logical name)
+	Name string `yaml:"name"`
+
+	// Directory name under plugins/ (physical install name)
+	InstallName string `yaml:"install_name"`
+
 	Version     string    `yaml:"version"`
 	Source      string    `yaml:"source"`
 	Ref         string    `yaml:"ref"`
+	Shims       []string  `yaml:"shims"`
 	InstalledAt time.Time `yaml:"installed_at"`
 }
 
@@ -70,4 +76,35 @@ func RegisterInstall(envDir string, ip InstalledPlugin) error {
 		r.Plugins = append(r.Plugins, ip)
 	}
 	return SaveRegistry(envDir, r)
+}
+
+// Helper to remove one plugin by InstallName (physical)
+func UnregisterByInstallName(envDir, installName string) error {
+	r, err := LoadRegistry(envDir)
+	if err != nil {
+		return err
+	}
+	out := make([]InstalledPlugin, 0, len(r.Plugins))
+	for _, p := range r.Plugins {
+		if p.InstallName != installName {
+			out = append(out, p)
+		}
+	}
+	r.Plugins = out
+	return SaveRegistry(envDir, r)
+}
+
+// Helper to get a record by InstallName
+func GetByInstallName(envDir, installName string) (*InstalledPlugin, error) {
+	r, err := LoadRegistry(envDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range r.Plugins {
+		if p.InstallName == installName {
+			cp := p
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("plugin not found: %s", installName)
 }

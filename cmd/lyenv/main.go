@@ -11,6 +11,7 @@ import (
 	"lyenv/internal/config"
 	"lyenv/internal/env"
 	"lyenv/internal/plugin"
+	"lyenv/internal/version"
 )
 
 func usage() {
@@ -28,6 +29,11 @@ func main() {
 	}
 
 	switch args[0] {
+
+	case "--version":
+		fmt.Printf("lyenv %s (commit %s, built %s)\n", version.Version, version.Commit, version.BuildTime)
+		return
+
 	case "create":
 		if len(args) != 2 {
 			fmt.Fprintln(os.Stderr, "Error: create requires exactly 1 argument <DIR>")
@@ -212,7 +218,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
 				os.Exit(1)
 			}
-	
+
 		case "install":
 			if len(args) < 3 {
 				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin install <NAME|PATH> [--name=<INSTALL_NAME>] [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
@@ -229,7 +235,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
 				os.Exit(1)
 			}
-	
+
 		case "list":
 			r, err := plugin.LoadRegistry(".")
 			if err != nil {
@@ -243,7 +249,7 @@ func main() {
 					fmt.Printf("%s  %s  (%s)\n", p.Name, p.Version, p.Source)
 				}
 			}
-	
+
 		case "info":
 			if len(args) != 3 {
 				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin info <NAME>")
@@ -269,19 +275,21 @@ func main() {
 					fmt.Printf("  - %s\n", s)
 				}
 			}
-	
+
 		case "remove":
-			if len(args) != 3 {
-				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin remove <NAME>")
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin remove <INSTALL_NAME> [--force]")
 				os.Exit(2)
 			}
-			name := strings.TrimSpace(args[2])
-			if err := plugin.PluginRemove(".", name); err != nil {
+			installName := strings.TrimSpace(args[2])
+			flags := config.ParseFlags(args[3:])
+			force := flags["force"] == "1"
+			if err := plugin.PluginRemove(".", installName, force); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin remove failed: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Plugin removed: %s\n", name)
-	
+			fmt.Printf("Plugin removed: %s\n", installName)
+		
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown plugin subcommand: %s\n", sub)
 			os.Exit(2)
