@@ -55,6 +55,7 @@ lyenv run %s $args
 }
 
 
+
 func DeleteShims(envDir string, expose []string) error {
     binDir := filepath.Join(envDir, "bin")
     for _, name := range expose {

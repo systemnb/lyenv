@@ -17,8 +17,43 @@ import (
 
 type MergeStrategy = config.MergeStrategy
 
+func resolvePluginDir(envDir, name string) (pluginDir string, installName string, err error) {
+	pluginsDir := filepath.Join(envDir, "plugins")
+
+	// 1) Try as install name (physical)
+	candidate := filepath.Join(pluginsDir, name)
+	if _, statErr := os.Stat(candidate); statErr == nil {
+		return candidate, name, nil
+	}
+
+	// 2) Fallback to registry: find record by install name
+	if rec, recErr := GetByInstallName(envDir, name); recErr == nil {
+		dir := filepath.Join(pluginsDir, rec.InstallName)
+		if _, statErr2 := os.Stat(dir); statErr2 == nil {
+			return dir, rec.InstallName, nil
+		}
+	}
+
+	// 3) Fallback to registry: find record by manifest logical name
+	if r, loadErr := LoadRegistry(envDir); loadErr == nil {
+		for _, p := range r.Plugins {
+			if p.Name == name {
+				dir := filepath.Join(pluginsDir, p.InstallName)
+				if _, statErr3 := os.Stat(dir); statErr3 == nil {
+					return dir, p.InstallName, nil
+				}
+			}
+		}
+	}
+
+	return "", "", fmt.Errorf("plugin directory not found for: %s", name)
+}
+
 func RunPluginCommand(envDir, pluginName, command string, passArgs []string, strategy MergeStrategy) error {
-	pluginDir := filepath.Join(envDir, "plugins", pluginName)
+	pluginDir, resolvedInstall, err := resolvePluginDir(envDir, pluginName)
+	if err != nil {
+		return err
+	}
 	man, err := LoadManifest(pluginDir)
 	if err != nil {
 		return err
@@ -91,6 +126,7 @@ func RunPluginCommand(envDir, pluginName, command string, passArgs []string, str
 	defer f.Close()
 	w := bufio.NewWriter(f)
 
+	fmt.Printf("Plugin resolved: name=%s install=%s dir=%s\n", pluginName, resolvedInstall, pluginDir)
 	writeLogLine(w, map[string]interface{}{
 		"level":   "info",
 		"action":  command,

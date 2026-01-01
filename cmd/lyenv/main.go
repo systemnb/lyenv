@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"lyenv/internal/cli"
@@ -262,17 +261,21 @@ func main() {
 
 		case "info":
 			if len(args) != 3 {
-				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin info <NAME>")
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin info <INSTALL_NAME|LOGICAL_NAME>")
 				os.Exit(2)
 			}
-			name := strings.TrimSpace(args[2])
-			dir := filepath.Join(".", "plugins", name)
+			input := strings.TrimSpace(args[2])
+			dir, installName, err := plugin.ResolvePluginDir(".", input) // you can expose resolve via exported func
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Plugin info failed: %v\n", err)
+				os.Exit(1)
+			}
 			man, err := plugin.LoadManifest(dir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin info failed: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Name: %s\nVersion: %s\n", man.Name, man.Version)
+			fmt.Printf("Install: %s\nName: %s\nVersion: %s\nDir: %s\n", installName, man.Name, man.Version, dir)
 			if len(man.Commands) > 0 {
 				fmt.Println("Commands:")
 				for _, c := range man.Commands {
