@@ -17,7 +17,7 @@ import (
 
 type MergeStrategy = config.MergeStrategy
 
-func resolvePluginDir(envDir, name string) (pluginDir string, installName string, err error) {
+func ResolvePluginDir(envDir, name string) (pluginDir string, installName string, err error) {
 	pluginsDir := filepath.Join(envDir, "plugins")
 
 	// 1) Try as install name (physical)
@@ -50,7 +50,7 @@ func resolvePluginDir(envDir, name string) (pluginDir string, installName string
 }
 
 func RunPluginCommand(envDir, pluginName, command string, passArgs []string, strategy MergeStrategy) error {
-	pluginDir, resolvedInstall, err := resolvePluginDir(envDir, pluginName)
+	pluginDir, resolvedInstall, err := ResolvePluginDir(envDir, pluginName)
 	if err != nil {
 		return err
 	}
