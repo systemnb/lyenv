@@ -222,7 +222,7 @@ func RunPluginCommand(ctx context.Context, envDir, pluginName, command string, p
 				tmp := &CommandSpec{
 					Executor: "stdio",
 					Program:  st.Program,
-					Args:     append(st.Args, passArgs...), // pass args if needed
+					Args:     st.Args, // only manifest-defined args
 					Workdir:  st.Workdir,
 					Env:      st.Env,
 					UseStdio: true,
@@ -313,7 +313,7 @@ func RunPluginCommand(ctx context.Context, envDir, pluginName, command string, p
 	switch strings.ToLower(spec.Executor) {
 	case "stdio":
 		// Pass args to stdio program if needed, and also via req["args"]
-		spec.Args = append(spec.Args, passArgs...)
+		// spec.Args = append(spec.Args, passArgs...)
 		resp, exitCode = spawnStdio(ctx, spec, pluginDir, req, w)
 
 	case "shell":
@@ -462,11 +462,10 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 
 	var cmd *exec.Cmd
 	if useInterpreter && interp != "" && scriptAbs != "" {
-		// Launch interpreter explicitly: <interp> [spec.Args...] <scriptAbs>
-		fullArgs := append(args, scriptAbs)
+		// CORRECT: python3 <script.py> <spec.Args...>
+		fullArgs := append([]string{scriptAbs}, args...)
 		cmd = exec.CommandContext(ctx, interp, fullArgs...)
 	} else {
-		// Regular execution: either absolute file path or bare command name
 		cmd = exec.CommandContext(ctx, entry, args...)
 	}
 
