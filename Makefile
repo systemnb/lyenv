@@ -1,7 +1,8 @@
 # Makefile for lyenv
-# Goal: ensure Go compiler exists before building lyenv.
+# Goal: ensure a usable Go compiler before building lyenv.
 # If 'go' is not available in PATH, download a local toolchain to ./dist/tools/go
 # and use it only for this build (no system-wide changes).
+# All comments in English for cross-platform readability.
 
 APP_NAME := lyenv
 PKG_MAIN := ./cmd/lyenv
@@ -50,7 +51,8 @@ HAVE_GO := $(shell command -v go >/dev/null 2>&1 && echo yes || echo no)
 CURL := $(shell command -v curl >/dev/null 2>&1 && echo curl || echo "")
 WGET := $(shell command -v wget >/dev/null 2>&1 && echo wget || echo "")
 
-.PHONY: all build clean install uninstall go-ensure go-download go-extract go-print go-local-env
+.PHONY: all build clean install uninstall \
+        go-ensure go-download go-extract go-print go-local-env go-clean
 
 all: build
 
@@ -97,14 +99,31 @@ go-download:
 	fi
 	@test -s "$(GO_TARBALL)" || (echo "[go-download] Failed to download Go tarball."; exit 1)
 
-# Extract tarball into $(GO_LOCAL_ROOT), idempotent
+# Extract tarball into $(GO_LOCAL_ROOT), with clean tree and integrity checks
 go-extract:
 	@mkdir -p $(GO_LOCAL_ROOT)
+	@echo "[go-extract] Cleaning old GOROOT tree (if any) ..."
+	@rm -rf "$(GO_LOCAL_ROOT)/go"
 	@echo "[go-extract] Extracting $(GO_TARBALL) to $(GO_LOCAL_ROOT)"
 	@tar -xzf "$(GO_TARBALL)" -C "$(GO_LOCAL_ROOT)"
 	@# After extraction, official tarball layout is: $(GO_LOCAL_ROOT)/go/bin/go
 	@test -x "$(GO_LOCAL_BIN)" || (echo "[go-extract] go binary not found after extraction."; exit 1)
-	@echo "[go-extract] Local Go ready at $(GO_LOCAL_BIN)"
+	@# Check toolchain integrity (asm/compile/link must exist)
+	@TOOLDIR="$(GO_LOCAL_ROOT)/go/pkg/tool/$(GO_OS)_$(GO_ARCH)"; \
+	if [ ! -x "$$TOOLDIR/asm" ] || [ ! -x "$$TOOLDIR/compile" ] || [ ! -x "$$TOOLDIR/link" ]; then \
+		echo "[go-extract] Incomplete toolchain under $$TOOLDIR (asm/compile/link missing)."; \
+		echo "[go-extract] Please remove tarball and re-download, then re-extract:"; \
+		echo "  rm -f $(GO_TARBALL) && make go-download && make go-extract"; \
+		exit 1; \
+	fi
+	@echo "[go-extract] Local Go ready at $(GO_LOCAL_BIN) with a complete toolchain."
+
+# Optional: clean local Go toolchain (tarball + extracted tree)
+go-clean:
+	@echo "[go-clean] Removing local Go tarball and extracted tree ..."
+	@rm -f "$(GO_TARBALL)"
+	@rm -rf "$(GO_LOCAL_ROOT)/go"
+	@echo "[go-clean] Done."
 
 # Expose how to use local Go (for debugging)
 go-local-env:
@@ -129,6 +148,13 @@ build: go-ensure
 		GOROOT_LOCAL="$(GO_LOCAL_ROOT)/go"; \
 		export GOROOT="$$GOROOT_LOCAL"; \
 		export PATH="$$GOROOT/bin:$$PATH"; \
+		# sanity check tools again (in case of external changes)
+		TOOLDIR="$$GOROOT/pkg/tool/$(GO_OS)_$(GO_ARCH)"; \
+		if [ ! -x "$$TOOLDIR/asm" ] || [ ! -x "$$TOOLDIR/compile" ] || [ ! -x "$$TOOLDIR/link" ]; then \
+			echo "[build] Incomplete toolchain (asm/compile/link). Please re-download & re-extract."; \
+			echo "        rm -f $(GO_TARBALL) && make go-download && make go-extract"; \
+			exit 1; \
+		fi; \
 		echo "[build] Using local Go at $$GOROOT_LOCAL"; \
 		go version; \
 		go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_PATH) $(PKG_MAIN); \
