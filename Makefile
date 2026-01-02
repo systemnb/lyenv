@@ -1,5 +1,7 @@
 # Makefile for lyenv
-# All comments in English for cross-platform readability.
+# Goal: ensure Go compiler exists before building lyenv.
+# If 'go' is not available in PATH, download a local toolchain to ./dist/tools/go
+# and use it only for this build (no system-wide changes).
 
 APP_NAME := lyenv
 PKG_MAIN := ./cmd/lyenv
@@ -14,137 +16,123 @@ LDFLAGS  := -X lyenv/internal/version.Version=$(VERSION) \
 BIN_DIR   := ./dist
 BIN_PATH  := $(BIN_DIR)/$(APP_NAME)
 TOOLS_DIR := $(BIN_DIR)/tools
-REPO_BIN  := $(TOOLS_DIR)/repo
 
-# Optional: allow user to override install prefix when PM can’t be detected.
-# Example: make deps PKG_INSTALL="sudo apt install -y"
-PKG_INSTALL ?=
+# ---------------------------------------------------------------------------
+# Go toolchain settings (local bootstrap when 'go' not found)
+# Change GO_VERSION when you want a different toolchain.
+GO_VERSION ?= 1.22.5
 
-.PHONY: all build clean install uninstall deps ensure-deps print-os print-pm
+# Detect OS/ARCH for official Go tarballs
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
+# Map uname to Go's naming
+# Supported: Linux x86_64/aarch64, Darwin x86_64/arm64
+GO_OS := $(shell \
+	if [ "$(UNAME_S)" = "Linux" ]; then echo "linux"; \
+	elif [ "$(UNAME_S)" = "Darwin" ]; then echo "darwin"; \
+	else echo "unsupported"; fi)
+GO_ARCH := $(shell \
+	if [ "$(UNAME_M)" = "x86_64" ]; then echo "amd64"; \
+	elif [ "$(UNAME_M)" = "aarch64" ] || [ "$(UNAME_M)" = "arm64" ]; then echo "arm64"; \
+	else echo "unsupported"; fi)
+
+# Local GOROOT under dist/tools/go
+GO_LOCAL_ROOT := $(TOOLS_DIR)/go-$(GO_VERSION)-$(GO_OS)-$(GO_ARCH)
+GO_LOCAL_BIN  := $(GO_LOCAL_ROOT)/go/bin/go
+GO_TARBALL    := $(TOOLS_DIR)/go$(GO_VERSION).$(GO_OS)-$(GO_ARCH).tar.gz
+GO_URL        := https://go.dev/dl/go$(GO_VERSION).$(GO_OS)-$(GO_ARCH).tar.gz
+
+# Helper: does system 'go' exist?
+HAVE_GO := $(shell command -v go >/dev/null 2>&1 && echo yes || echo no)
+
+# Allow overriding download command if needed:
+CURL := $(shell command -v curl >/dev/null 2>&1 && echo curl || echo "")
+WGET := $(shell command -v wget >/dev/null 2>&1 && echo wget || echo "")
+
+.PHONY: all build clean install uninstall go-ensure go-download go-extract go-print go-local-env
 
 all: build
 
-# ---- Dependencies (OS packages + repo script) ------------------------------
-
-# Main entry to ensure all deps
-deps: ensure-deps
-
-ensure-deps: print-os print-pm $(REPO_BIN)
-	@echo "Dependencies are ensured."
-
-# Detect OS and package manager; store hints in files under dist/
-print-os:
-	@mkdir -p $(BIN_DIR)
-	@echo "Detecting OS via /etc/os-release ..."
-	@if [ -f /etc/os-release ]; then \
-		. /etc/os-release; \
-		echo "os_id=$$ID" > $(BIN_DIR)/os_detect.txt; \
-		echo "os_version_id=$$VERSION_ID" >> $(BIN_DIR)/os_detect.txt; \
-		echo "Detected: $$ID $$VERSION_ID"; \
-	else \
-		echo "os_id=unknown" > $(BIN_DIR)/os_detect.txt; \
-		echo "os_version_id=unknown" >> $(BIN_DIR)/os_detect.txt; \
-		echo "Warning: /etc/os-release not found. OS unknown."; \
-	fi
-
-print-pm:
-	@mkdir -p $(BIN_DIR)
-	@echo "Detecting package manager ..."
-	@PM=""; \
-	if command -v apt-get >/dev/null 2>&1; then PM="apt-get"; \
-	elif command -v dnf >/dev/null 2>&1; then PM="dnf"; \
-	elif command -v yum >/dev/null 2>&1; then PM="yum"; \
-	elif command -v zypper >/dev/null 2>&1; then PM="zypper"; \
-	elif command -v pacman >/dev/null 2>&1; then PM="pacman"; \
-	elif command -v apk >/dev/null 2>&1; then PM="apk"; \
-	else PM=""; fi; \
-	echo "pkg_manager_name=$$PM" > $(BIN_DIR)/pm_detect.txt; \
-	if [ -z "$$PM" ]; then \
-		echo "No known package manager detected."; \
-		if [ -z "$(PKG_INSTALL)" ]; then \
-			echo ""; \
-			echo "Please provide an install prefix via PKG_INSTALL (e.g., 'sudo apt install -y')."; \
-			echo "Usage: make deps PKG_INSTALL='sudo apt install -y'"; \
-		else \
-			echo "Using user-provided PKG_INSTALL='$(PKG_INSTALL)'"; \
-		fi; \
-	else \
-		echo "Detected package manager: $$PM"; \
-	fi
-
-# Download 'repo' tool to project-local tools dir
-$(REPO_BIN):
-	@mkdir -p $(TOOLS_DIR)
-	@echo "Ensuring 'repo' tool locally at $(REPO_BIN) ..."
-	@if [ -s "$(REPO_BIN)" ]; then \
-		echo "'repo' already exists."; \
-	else \
-		# Try TUNA mirror first if user prefers; fall back to official.
-		REPO_URL_PRIMARY="https://storage.googleapis.com/git-repo-downloads/repo"; \
-		REPO_URL_TUNA="https://mirrors.tuna.tsinghua.edu.cn/git-repo-downloads/repo"; \
-		DOWNLOAD_OK=""; \
-		for URL in "$$REPO_URL_TUNA" "$$REPO_URL_PRIMARY"; do \
-			if command -v curl >/dev/null 2>&1; then \
-				echo "Downloading via curl: $$URL"; \
-				if curl -L "$$URL" -o "$(REPO_BIN)"; then DOWNLOAD_OK="yes"; break; fi; \
-			elif command -v wget >/dev/null 2>&1; then \
-				echo "Downloading via wget: $$URL"; \
-				if wget -O "$(REPO_BIN)" "$$URL"; then DOWNLOAD_OK="yes"; break; fi; \
-			else \
-				echo "Error: Neither curl nor wget found; cannot download 'repo'."; \
-				break; \
-			fi; \
-		done; \
-		if [ -z "$$DOWNLOAD_OK" ]; then \
-			echo "Failed to download 'repo' from known URLs."; \
-			echo "Please manually place the script at $(REPO_BIN)."; \
-			exit 1; \
-		fi; \
-		chmod +x "$(REPO_BIN)"; \
-		echo "Saved 'repo' to $(REPO_BIN)."; \
-	fi
-
-# Install OS-level packages (maps differ per PM). This rule is invoked by 'build' before compilation.
-# It gracefully handles missing PM by using PKG_INSTALL when provided.
-install-deps: print-pm
+# ---------------------------------------------------------------------------
+# Ensure a usable Go compiler (system or local)
+go-ensure: go-print
 	@set -e; \
-	PM=$$(sed -n 's/^pkg_manager_name=//p' $(BIN_DIR)/pm_detect.txt); \
-	echo "Installing packages via PM='$$PM' ..."; \
-	if [ "$$PM" = "apt-get" ]; then \
-		sudo apt-get update || true; \
-		sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python3 python-is-python3 rsync perl curl git unzip tar; \
-	elif [ "$$PM" = "dnf" ]; then \
-		sudo dnf install -y gcc gcc-c++ make flex bison openssl-devel elfutils-libelf-devel bc python3 rsync perl curl git unzip tar; \
-	elif [ "$$PM" = "yum" ]; then \
-		sudo yum install -y gcc gcc-c++ make flex bison openssl-devel elfutils-libelf-devel bc python3 rsync perl curl git unzip tar; \
-	elif [ "$$PM" = "zypper" ]; then \
-		sudo zypper refresh || true; \
-		sudo zypper install -y gcc gcc-c++ make flex bison libopenssl-devel libelf-devel bc python3 rsync perl curl git unzip tar; \
-	elif [ "$$PM" = "pacman" ]; then \
-		sudo pacman -Sy || true; \
-		sudo pacman -S --noconfirm base-devel flex bison openssl elfutils bc python rsync perl curl git unzip tar; \
-	elif [ "$$PM" = "apk" ]; then \
-		sudo apk update || true; \
-		sudo apk add build-base flex bison openssl-dev elfutils-dev bc python3 rsync perl curl git unzip tar; \
+	if [ "$(HAVE_GO)" = "yes" ]; then \
+		echo "[go-ensure] Found system 'go' at: $$(command -v go)"; \
 	else \
-		if [ -z "$(PKG_INSTALL)" ]; then \
-			echo "No PM detected and PKG_INSTALL not provided."; \
-			echo "Please re-run: make deps PKG_INSTALL='sudo apt install -y'"; \
+		if [ "$(GO_OS)" = "unsupported" ] || [ "$(GO_ARCH)" = "unsupported" ]; then \
+			echo "[go-ensure] Unsupported platform: $(UNAME_S)/$(UNAME_M)"; \
+			echo "Please install Go $(GO_VERSION) manually and ensure 'go' is in PATH."; \
 			exit 1; \
 		fi; \
-		echo "Using custom installer prefix: $(PKG_INSTALL)"; \
-		$(PKG_INSTALL) rsync perl curl git unzip tar flex bison bc || true; \
-		# Try common dev packages (names may differ per distro): \
-		$(PKG_INSTALL) gcc g++ make openssl-devel libssl-dev elfutils-libelf-devel libelf-dev python3 || true; \
-	fi; \
-	echo "OS packages installation attempted."
+		$(MAKE) go-download; \
+		$(MAKE) go-extract; \
+	fi
 
-# ---- Build / Install / Uninstall / Clean -----------------------------------
+# Print environment summary
+go-print:
+	@mkdir -p $(TOOLS_DIR)
+	@echo "[go-print] System OS: $(UNAME_S), ARCH: $(UNAME_M)"
+	@echo "[go-print] Mapped GO_OS=$(GO_OS), GO_ARCH=$(GO_ARCH), GO_VERSION=$(GO_VERSION)"
+	@echo "[go-print] System 'go' present? $(HAVE_GO)"
+	@echo "[go-print] Local GOROOT: $(GO_LOCAL_ROOT)"
 
-build: deps install-deps
+# Download Go tarball to tools dir (uses curl or wget)
+go-download:
+	@mkdir -p $(TOOLS_DIR)
+	@echo "[go-download] Fetching $(GO_URL) -> $(GO_TARBALL)"
+	@if [ -s "$(GO_TARBALL)" ]; then \
+		echo "[go-download] Tarball already present."; \
+	else \
+		if [ -n "$(CURL)" ]; then \
+			$(CURL) -L "$(GO_URL)" -o "$(GO_TARBALL)"; \
+		elif [ -n "$(WGET)" ]; then \
+			$(WGET) -O "$(GO_TARBALL)" "$(GO_URL)"; \
+		else \
+			echo "[go-download] Neither 'curl' nor 'wget' is available."; \
+			echo "Please download $(GO_URL) manually to $(GO_TARBALL)"; \
+			exit 1; \
+		fi; \
+	fi
+	@test -s "$(GO_TARBALL)" || (echo "[go-download] Failed to download Go tarball."; exit 1)
+
+# Extract tarball into $(GO_LOCAL_ROOT), idempotent
+go-extract:
+	@mkdir -p $(GO_LOCAL_ROOT)
+	@echo "[go-extract] Extracting $(GO_TARBALL) to $(GO_LOCAL_ROOT)"
+	@tar -xzf "$(GO_TARBALL)" -C "$(GO_LOCAL_ROOT)"
+	@# After extraction, official tarball layout is: $(GO_LOCAL_ROOT)/go/bin/go
+	@test -x "$(GO_LOCAL_BIN)" || (echo "[go-extract] go binary not found after extraction."; exit 1)
+	@echo "[go-extract] Local Go ready at $(GO_LOCAL_BIN)"
+
+# Expose how to use local Go (for debugging)
+go-local-env:
+	@echo "To use local Go:"
+	@echo "  export GOROOT=$(GO_LOCAL_ROOT)/go"
+	@echo "  export PATH=\$$GOROOT/bin:\$$PATH"
+	@echo "  go version"
+
+# ---------------------------------------------------------------------------
+# Build lyenv (uses system 'go' if present; otherwise uses local GOROOT/PATH)
+build: go-ensure
 	@mkdir -p $(BIN_DIR)
 	@echo "Building $(APP_NAME) $(VERSION) (commit $(COMMIT))..."
-	@go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_PATH) $(PKG_MAIN)
+	@set -e; \
+	if [ "$(HAVE_GO)" = "yes" ]; then \
+		GO_BIN=$$(command -v go); \
+		GOROOT=$$(go env GOROOT); \
+		echo "[build] Using system Go: $$GO_BIN (GOROOT=$$GOROOT)"; \
+		go version; \
+		go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_PATH) $(PKG_MAIN); \
+	else \
+		GOROOT_LOCAL="$(GO_LOCAL_ROOT)/go"; \
+		export GOROOT="$$GOROOT_LOCAL"; \
+		export PATH="$$GOROOT/bin:$$PATH"; \
+		echo "[build] Using local Go at $$GOROOT_LOCAL"; \
+		go version; \
+		go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_PATH) $(PKG_MAIN); \
+	fi
 	@echo "Binary: $(BIN_PATH)"
 
 clean:
