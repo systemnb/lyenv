@@ -34,6 +34,7 @@ if ! $removed; then
   echo "No installed binary found."
 fi
 
+SHELL_NAME="$(basename "${SHELL:-sh}")"
 if [[ -f "$HOME/.${SHELL_NAME}rc" ]]; then
       sed -i '/###lyenv###/,/###lyenv###/d' "$HOME/.${SHELL_NAME}rc"
       echo "Removed from $HOME/.${SHELL_NAME}rc"
