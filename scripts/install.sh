@@ -57,6 +57,18 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$TARGET_DIR"; then
       echo "You may add it to: $f"
     fi
   done
+  read -rp "Would you like to add it to your $SHELL_NAME profile? (y/N) " yn
+  case "$yn" in
+    [Yy]*)
+      echo "###lyenv###" >> "$HOME/.${SHELL_NAME}rc"
+      echo "export PATH=\"$TARGET_DIR:\$PATH\"" >> "$HOME/.${SHELL_NAME}rc"
+      echo "###lyenv###" >> "$HOME/.${SHELL_NAME}rc"
+      echo "Added to $HOME/.${SHELL_NAME}rc"
+      ;;
+    *)
+      echo "Not adding to profile."
+      ;;
+  esac
 fi
 
 echo "Done."
