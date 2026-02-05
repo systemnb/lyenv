@@ -1,0 +1,3 @@
+# default config for the demo plugin
+hello:
+  enabled: false
