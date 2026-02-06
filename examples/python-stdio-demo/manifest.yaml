@@ -9,7 +9,7 @@ commands:
   - name: configure
     summary: "Configure via Python stdio (one-liner mutations)"
     executor: stdio
-    program: ./scripts/configure.py
+    program: ./configure.py
     use_stdio: true
     workdir: .
 
