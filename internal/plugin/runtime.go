@@ -412,48 +412,79 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		return map[string]interface{}{"status": "error", "message": err.Error()}, 1
 	}
 
-	// Decide entry path:
-	entry := spec.Program
-	if filepath.IsAbs(spec.Program) {
-		// absolute path, keep as-is
-	} else if strings.ContainsRune(spec.Program, os.PathSeparator) {
-		// plugin-relative path -> use absolute path
-		entry = filepath.Join(absPluginDir, spec.Program)
+	// -------- Workdir resolution (default to <plugin>/scripts if present) --------
+	// Effective workdir priority:
+	// 1) spec.Workdir (absolute or plugin-relative)
+	// 2) <plugin>/scripts (if exists)
+	// 3) <plugin>
+	resolvedWorkdir := absPluginDir
+	if strings.TrimSpace(spec.Workdir) != "" {
+		if filepath.IsAbs(spec.Workdir) {
+			resolvedWorkdir = spec.Workdir
+		} else {
+			resolvedWorkdir = filepath.Join(absPluginDir, spec.Workdir)
+		}
 	} else {
-		// bare command name (e.g., "python3"), keep as-is
+		scriptsDir := filepath.Join(absPluginDir, "scripts")
+		if st, err := os.Stat(scriptsDir); err == nil && st.IsDir() {
+			resolvedWorkdir = scriptsDir
+		}
 	}
 
-	args := append(spec.Args, []string{}...)
+	// -------- Program/entry resolution --------
+	// Rules:
+	// - absolute path: use as-is
+	// - relative with separator: join against <plugin> (keep compatibility with ./scripts/foo.py)
+	// - bare name (no path separator):
+	//     * if file exists in resolvedWorkdir, run that absolute file
+	//     * else leave bare (PATH lookup)
+	prog := strings.TrimSpace(spec.Program)
+	if prog == "" {
+		return map[string]interface{}{"status": "error", "message": "stdio executor requires 'program'"}, 1
+	}
 
-	// If entry is an absolute script file under pluginDir, parse shebang and launch interpreter explicitly.
+	entry := prog
+	if filepath.IsAbs(prog) {
+		// keep as-is
+	} else if strings.ContainsRune(prog, os.PathSeparator) {
+		entry = filepath.Join(absPluginDir, prog)
+	} else {
+		// bare program name -> prefer workdir file
+		candidate := filepath.Join(resolvedWorkdir, prog)
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			entry = candidate
+		}
+	}
+
+	args := append([]string{}, spec.Args...) // manifest-defined args only
+
+	// -------- Shebang detection / interpreter launch --------
+	// If entry points to a regular file, parse a possible shebang and exec interpreter explicitly.
 	useInterpreter := false
 	interp := ""
 	scriptAbs := ""
 
-	// We only attempt shebang parsing when entry points to a regular file.
-	if !isBareCommand(spec.Program) {
-		if st, err := os.Stat(entry); err == nil && !st.IsDir() {
-			f, err := os.Open(entry)
-			if err == nil {
-				defer f.Close()
-				r := bufio.NewReader(f)
-				line, _ := r.ReadString('\n')
-				if strings.HasPrefix(line, "#!") {
-					fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "#!"))
-					if len(fields) >= 1 {
-						if filepath.Base(fields[0]) == "env" && len(fields) >= 2 {
-							// #!/usr/bin/env python3 -> resolve python3 in PATH
-							if abs, err := exec.LookPath(fields[1]); err == nil {
-								interp = abs
-								useInterpreter = true
-								scriptAbs = entry // pass absolute script path
-							}
-						} else if filepath.IsAbs(fields[0]) {
-							// Absolute interpreter path
-							interp = fields[0]
+	if st, err := os.Stat(entry); err == nil && !st.IsDir() {
+		f, err := os.Open(entry)
+		if err == nil {
+			defer f.Close()
+			r := bufio.NewReader(f)
+			line, _ := r.ReadString('\n')
+			if strings.HasPrefix(line, "#!") {
+				fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "#!"))
+				if len(fields) >= 1 {
+					if filepath.Base(fields[0]) == "env" && len(fields) >= 2 {
+						// #!/usr/bin/env python3
+						if abs, err := exec.LookPath(fields[1]); err == nil {
+							interp = abs
 							useInterpreter = true
 							scriptAbs = entry
 						}
+					} else if filepath.IsAbs(fields[0]) {
+						// absolute interpreter
+						interp = fields[0]
+						useInterpreter = true
+						scriptAbs = entry
 					}
 				}
 			}
@@ -462,36 +493,23 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 
 	var cmd *exec.Cmd
 	if useInterpreter && interp != "" && scriptAbs != "" {
-		// CORRECT: python3 <script.py> <spec.Args...>
 		fullArgs := append([]string{scriptAbs}, args...)
 		cmd = exec.CommandContext(ctx, interp, fullArgs...)
 	} else {
 		cmd = exec.CommandContext(ctx, entry, args...)
 	}
 
-	// Use absolute plugin dir as working directory unless spec.Workdir overrides it (which we also convert to absolute).
-	cmd.Dir = func() string {
-		if strings.TrimSpace(spec.Workdir) == "" {
-			return absPluginDir
-		}
-		if filepath.IsAbs(spec.Workdir) {
-			return spec.Workdir
-		}
-		return filepath.Join(absPluginDir, spec.Workdir)
-	}()
-
+	cmd.Dir = resolvedWorkdir
 	cmd.Env = withExtraEnv(os.Environ(), spec.Env)
 	cmd.Stderr = newLogWriter(w, "stderr")
 
-	// Extra debug context
+	// Debug context helps diagnose wrong path issues
 	writeLogLine(w, map[string]interface{}{
 		"level":   "debug",
 		"message": "spawn stdio",
 		"entry":   entry,
-		"interp":  interp,
 		"args":    args,
 		"workdir": cmd.Dir,
-		"envPATH": os.Getenv("PATH"),
 	})
 
 	stdin, _ := cmd.StdinPipe()
