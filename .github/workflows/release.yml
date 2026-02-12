@@ -117,32 +117,33 @@ jobs:
               .
           popd
 
-      - name: Prepare package folder
+      - name: Install zip (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        shell: pwsh
+        run: choco install zip -y
+
+
+      - name: Package artifacts
         shell: bash
         run: |
           set -euo pipefail
           ver="${GITHUB_REF_NAME}"
           out="lyenv-${ver}-${{ matrix.target }}"
-          echo "PKG_OUT=$out" >> $GITHUB_ENV
 
-          mkdir -p "package/$out"
+          mkdir -p package/"$out"
           mkdir -p release
 
-          cp dist/lyenv* "package/$out"/
+          cp dist/lyenv* package/"$out"/
           if [ "${{ matrix.build_gui }}" = "true" ]; then
-            cp dist/lyenv-gui* "package/$out"/
+            cp dist/lyenv-gui* package/"$out"/
           fi
-          cp README.md LICENSE "package/$out"/ || true
+          cp README.md LICENSE package/"$out"/ || true
 
-      - name: Package (Windows zip)
-        if: ${{ matrix.goos == 'windows' }}
-        shell: pwsh
-        run: |
-          $out = "${env:PKG_OUT}"
-          $src = "package/$out"
-          $dst = "release/$out.zip"
-          if (Test-Path $dst) { Remove-Item $dst -Force }
-          Compress-Archive -Path $src -DestinationPath $dst -Force
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            (cd package && zip -r "../release/${out}.zip" "${out}")
+          else
+            (cd package && tar -czf "../release/${out}.tar.gz" "${out}")
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
