@@ -33,7 +33,7 @@ func SearchCenterPlugins(envDir string, keywords []string) ([]string, error) {
 	if _, err := os.Stat(cachePath); err == nil {
 		idx, err = config.LoadAny(cachePath)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cached index: %w")
+			return nil, fmt.Errorf("invalid cached index: %w", err)
 		}
 	} else {
 		// fetch remote
@@ -43,7 +43,7 @@ func SearchCenterPlugins(envDir string, keywords []string) ([]string, error) {
 		}
 		idx, err = config.LoadAny(path)
 		if err != nil {
-			return nil, fmt.Errorf("invalid registry index: %w")
+			return nil, fmt.Errorf("invalid registry index: %w", err)
 		}
 	}
 

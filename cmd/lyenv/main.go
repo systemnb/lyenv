@@ -1,11 +1,14 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"lyenv/internal/cli"
 	"lyenv/internal/config"
 	"lyenv/internal/env"
+	"lyenv/internal/guictl"
 	"lyenv/internal/plugin"
 	"lyenv/internal/version"
 )
@@ -211,38 +215,51 @@ func main() {
 		switch sub {
 		case "add":
 			if len(args) < 3 {
-				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin add <PATH> [--name=<INSTALL_NAME>]")
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin add <PATH|ZIP> [--name=<INSTALL_NAME>]")
 				os.Exit(2)
 			}
-			// Find first non-flag as PATH
-			var path string
+			// Find first non-flag as PATH or ZIP
+			var pathOrZip string
 			var flagArgs []string
 			for _, a := range args[2:] {
 				if strings.HasPrefix(a, "--") {
 					flagArgs = append(flagArgs, a)
-				} else if path == "" {
-					path = a
+				} else if pathOrZip == "" {
+					pathOrZip = a
 				} else {
-					// Extra positional tokens are not expected for 'add'; treat as error
 					fmt.Fprintln(os.Stderr, "Error: too many positional arguments for 'plugin add'")
 					os.Exit(2)
 				}
 			}
-			if path == "" {
-				fmt.Fprintln(os.Stderr, "Error: <PATH> must not be empty")
+			if pathOrZip == "" {
+				fmt.Fprintln(os.Stderr, "Error: <PATH|ZIP> must not be empty")
 				os.Exit(2)
 			}
 			flags := config.ParseFlags(flagArgs)
 			overrideName := flags["name"]
 
-			if err := plugin.PluginAddLocal(".", path, overrideName); err != nil {
-				fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
-				os.Exit(1)
+			// NEW: support .zip directly
+			if isZipFile(pathOrZip) {
+				extractedRoot, cleanup, err := unzipToTempAndDetectRoot(pathOrZip)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ZIP extract failed: %v\n", err)
+					os.Exit(1)
+				}
+				defer cleanup()
+				if err := plugin.PluginAddLocal(".", extractedRoot, overrideName); err != nil {
+					fmt.Fprintf(os.Stderr, "Plugin add (zip) failed: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				if err := plugin.PluginAddLocal(".", pathOrZip, overrideName); err != nil {
+					fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
+					os.Exit(1)
+				}
 			}
 
 		case "install":
 			if len(args) < 3 {
-				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin install <NAME|PATH> [--name=<INSTALL_NAME>] [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv plugin install <NAME|PATH|ZIP> [--name=<INSTALL_NAME>] [--repo=<org/repo>] [--ref=<branch|tag|commit>] [--source=<url>] [--proxy=<url>]")
 				os.Exit(2)
 			}
 			nameOrPath := strings.TrimSpace(args[2])
@@ -254,12 +271,28 @@ func main() {
 			overrideName := flags["name"]
 
 			if nameOrPath == "" {
-				fmt.Fprintln(os.Stderr, "Error: <NAME|PATH> must not be empty")
+				fmt.Fprintln(os.Stderr, "Error: <NAME|PATH|ZIP> must not be empty")
 				os.Exit(2)
 			}
-			if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName); err != nil {
-				fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
-				os.Exit(1)
+
+			// NEW: local ZIP path install
+			if isZipFile(nameOrPath) && fileExists(nameOrPath) {
+				extractedRoot, cleanup, err := unzipToTempAndDetectRoot(nameOrPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ZIP extract failed: %v\n", err)
+					os.Exit(1)
+				}
+				defer cleanup()
+				if err := plugin.PluginAddLocal(".", extractedRoot, overrideName); err != nil {
+					fmt.Fprintf(os.Stderr, "Plugin install (zip) failed: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				// existing logic (center by name, local path, repo/ref/source/proxy)
+				if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName); err != nil {
+					fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
+					os.Exit(1)
+				}
 			}
 
 		case "info":
@@ -268,7 +301,7 @@ func main() {
 				os.Exit(2)
 			}
 			input := strings.TrimSpace(args[2])
-			dir, installName, err := plugin.ResolvePluginDir(".", input) // you can expose resolve via exported func
+			dir, installName, err := plugin.ResolvePluginDir(".", input)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin info failed: %v\n", err)
 				os.Exit(1)
@@ -398,12 +431,15 @@ func main() {
 
 		var rawFlags []string
 		var passArgs []string
-		if i := indexOf(args[3:], "--"); i >= 0 {
-			rawFlags = args[3 : 3+i]
-			passArgs = args[3+i+1:]
-		} else {
-			rawFlags = args[3:]
+
+		for _, a := range args[3:] {
+			if strings.HasPrefix(a, "--") {
+				rawFlags = append(rawFlags, a)
+			} else {
+				passArgs = append(passArgs, a)
+			}
 		}
+
 		flags := config.ParseFlags(rawFlags)
 		strategy := config.ParseMergeStrategy(flags["merge"])
 
@@ -429,10 +465,129 @@ func main() {
 			defer cancel()
 		}
 
+		wantJSON := flags["json"] == "1"
+
+		if wantJSON {
+			_ = os.Setenv("LYENV_JSON", "1")
+		}
+
 		// Call plugin runtime with options
-		if err := plugin.RunPluginCommand(ctx, ".", pl, cmd, passArgs, strategy, keepGoing); err != nil {
+		rec, err := plugin.RunPluginCommandWithRecord(ctx, ".", pl, cmd, passArgs, strategy, keepGoing)
+		if wantJSON && rec != nil {
+			b, _ := json.Marshal(rec)
+			fmt.Println(string(b))
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Run failed: %v\n", err)
 			os.Exit(1)
+		}
+
+	case "gui":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Error: missing subcommand for gui (start|stop|status|open)")
+			os.Exit(2)
+		}
+		sub := args[1]
+		flags := config.ParseFlags(args[2:])
+
+		addr := strings.TrimSpace(flags["addr"])
+		if addr == "" {
+			addr = strings.TrimSpace(os.Getenv("LYENV_GUI_ADDR"))
+		}
+		if addr == "" {
+			addr = "127.0.0.1:18888"
+		}
+		autoOpen := flags["open"] == "1"
+
+		switch sub {
+		case "start":
+			if err := guictl.StartGlobal(addr); err != nil {
+				fmt.Fprintf(os.Stderr, "GUI start failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("GUI started: http://%s\n", addr)
+			if autoOpen {
+				_ = guictl.OpenBrowser("http://" + addr)
+			}
+		case "stop":
+			if err := guictl.StopGlobal(); err != nil {
+				fmt.Fprintf(os.Stderr, "GUI stop failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("GUI stopped.")
+		case "status":
+			st, err := guictl.StatusGlobal()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "GUI status failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(st)
+		case "open":
+			_ = guictl.OpenBrowser("http://" + addr)
+
+		case "add":
+			// usage: lyenv gui add <DIR> [--name=xxx]
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv gui add <DIR> [--name=<ENV_NAME>]")
+				os.Exit(2)
+			}
+			dir := strings.TrimSpace(args[2])
+			name := strings.TrimSpace(flags["name"])
+			createOn := true
+			if flags["create"] == "0" {
+				createOn = false
+			}
+			if err := guictl.GuiEnvAdd(dir, name, createOn); err != nil {
+				fmt.Fprintf(os.Stderr, "GUI env add failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("OK")
+
+		case "remove":
+			// usage: lyenv gui remove <NAME|PATH>
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Error: usage: lyenv gui remove <NAME|PATH>")
+				os.Exit(2)
+			}
+			key := strings.TrimSpace(args[2])
+			if err := guictl.GuiEnvRemove(key); err != nil {
+				fmt.Fprintf(os.Stderr, "GUI env remove failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("OK")
+
+		case "list":
+			// usage: lyenv gui list [--json]
+			wantJSON := flags["json"] == "1"
+			lst, err := guictl.GuiEnvList()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "GUI env list failed: %v\n", err)
+				os.Exit(1)
+			}
+			if wantJSON {
+				b, _ := json.MarshalIndent(lst, "", "  ")
+				fmt.Println(string(b))
+			} else {
+				if len(lst) == 0 {
+					fmt.Println("No GUI environments registered. Use: lyenv gui add <DIR>")
+				} else {
+					for _, e := range lst {
+						fmt.Printf("%s\t%s\n", e.Name, e.Path)
+					}
+				}
+			}
+
+		case "prune":
+			n, err := guictl.GuiEnvPrune()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "GUI env prune failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Pruned %d missing entrie(s).\n", n)
+
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown gui subcommand: %s\n", sub)
+			os.Exit(2)
 		}
 
 	default:
@@ -449,4 +604,129 @@ func indexOf(arr []string, needle string) int {
 		}
 	}
 	return -1
+}
+
+// -----------------------------
+// ZIP helpers (local install)
+// -----------------------------
+
+func isZipFile(p string) bool {
+	lp := strings.ToLower(strings.TrimSpace(p))
+	return strings.HasSuffix(lp, ".zip")
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// unzipToTempAndDetectRoot extracts zip into ./cache/unzip-<ts>-<pid>,
+// then returns the real root dir that contains manifest.yaml.
+// If top-level contains a single subdir and manifest.yaml is inside it, we descend.
+func unzipToTempAndDetectRoot(zipPath string) (root string, cleanup func(), err error) {
+	// ensure cache dir
+	cacheDir := filepath.Join(".", "cache")
+	if e := os.MkdirAll(cacheDir, 0o755); e != nil {
+		return "", func() {}, fmt.Errorf("mkdir cache: %w", e)
+	}
+	base := fmt.Sprintf("unzip-%d-%d", time.Now().Unix(), os.Getpid())
+	dest := filepath.Join(cacheDir, base)
+	if e := os.MkdirAll(dest, 0o755); e != nil {
+		return "", func() {}, fmt.Errorf("mkdir temp: %w", e)
+	}
+
+	cleanup = func() {
+		_ = os.RemoveAll(dest)
+	}
+
+	if e := unzipAll(zipPath, dest); e != nil {
+		return "", cleanup, e
+	}
+
+	// Detect actual manifest root
+	rootDir, e := detectManifestRoot(dest)
+	if e != nil {
+		return "", cleanup, e
+	}
+	return rootDir, cleanup, nil
+}
+
+func unzipAll(zipPath, dest string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("open zip: %w", err)
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		if err := unzipEntry(f, dest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func unzipEntry(f *zip.File, dest string) error {
+	// protect against zip slip
+	cleanName := filepath.Clean(f.Name)
+	if strings.HasPrefix(cleanName, "..") || strings.Contains(cleanName, ":") {
+		return fmt.Errorf("illegal path in zip: %s", f.Name)
+	}
+	targetPath := filepath.Join(dest, cleanName)
+
+	if f.FileInfo().IsDir() {
+		return os.MkdirAll(targetPath, 0o755)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return err
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
+	if err != nil {
+		// fallback when mode not honored on some FS
+		out, err = os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, rc); err != nil {
+		return err
+	}
+	return nil
+}
+
+func detectManifestRoot(dest string) (string, error) {
+	// Case 1: manifest.yaml at dest
+	if fileExists(filepath.Join(dest, "manifest.yaml")) {
+		return dest, nil
+	}
+	// Case 2: single subdir that contains manifest.yaml
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		return "", err
+	}
+	var subdirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			subdirs = append(subdirs, filepath.Join(dest, e.Name()))
+		}
+	}
+	if len(subdirs) == 1 && fileExists(filepath.Join(subdirs[0], "manifest.yaml")) {
+		return subdirs[0], nil
+	}
+	// Case 3: scan shallow
+	for _, sd := range subdirs {
+		if fileExists(filepath.Join(sd, "manifest.yaml")) {
+			return sd, nil
+		}
+	}
+	return "", fmt.Errorf("manifest.yaml not found in %s", dest)
 }

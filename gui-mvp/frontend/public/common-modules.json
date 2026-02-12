@@ -1,0 +1,185 @@
+[
+  {
+    "key": "bash",
+    "label": "Run Bash Command",
+    "color": "#0ea5e9",
+    "category": "Shell",
+    "description": "Execute a bash command (e.g., bash -lc \"echo hi\")",
+    "template": {
+      "kind": "command",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "echo hello"
+      ],
+      "cwd": ".",
+      "ports": {
+        "inputs": [
+          {
+            "name": "in",
+            "dtype": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "any"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "config_write",
+    "label": "Write Config (JSON)",
+    "color": "#10b981",
+    "category": "Config",
+    "description": "Write/update JSON file: file + key + value → ok",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "#!/usr/bin/env bash\n# Demo stdio command: read request, write one-line mutations via SDK.\nset -euo pipefail\n\n# Ensure we can source sdk from current dir\n# configure.sh and lyenv_sdk.sh should be in the same folder\nsource ./lyenv_sdk.sh\n\nmain() {\n  lyenv_read_request\n\n  # plugin local config\n  lyenv_plugin_write_config 'hello.enabled' 'true' 'plugin'\n\n  # global config\n  # Use UTC ISO8601\n  ts='$(date -u +'%Y-%m-%dT%H:%M:%SZ')'\n  lyenv_plugin_write_config 'demo.last_run_at' '$ts' 'global'\n\n  # simple log (we do not parse req in bash demo)\n  lyenv_log 'bash: configured at $ts'\n\n  lyenv_respond_ok 'ok'\n}\n\nmain\n",
+      "ports": {
+        "inputs": [
+          {
+            "name": "file",
+            "dtype": "text"
+          },
+          {
+            "name": "key",
+            "dtype": "text"
+          },
+          {
+            "name": "value",
+            "dtype": "text"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "ok",
+            "dtype": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "config_read",
+    "label": "Read Config (JSON)",
+    "color": "#06b6d4",
+    "category": "Config",
+    "description": "Read JSON file: file + key → value",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "# Read JSON config: inputs (file, key) -> value\nfrom sys import argv\n# argv[1]=file argv[2]=key\nimport json, os\np=argv[1]; k=argv[2]\ntry:\n  with open(p,'r',encoding='utf-8') as f: cfg=json.load(f) or {}\n  print(str(cfg.get(k,'') if isinstance(cfg,dict) else ''))\nexcept:\n  print('')\n",
+      "ports": {
+        "inputs": [
+          {
+            "name": "file",
+            "dtype": "text"
+          },
+          {
+            "name": "key",
+            "dtype": "text"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "value",
+            "dtype": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "code",
+    "label": "Code (Python)",
+    "color": "#4f46e5",
+    "category": "General",
+    "description": "Generic Python node you can edit freely",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "from sys import argv\nprint(' '.join(argv[1:]))\n",
+      "ports": {
+        "inputs": [
+          {
+            "name": "in",
+            "dtype": "any"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "any"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "sdk_test_python",
+    "label": "SDK Self-Test (Python)",
+    "color": "#8b5cf6",
+    "category": "General",
+    "description": "Verify scripts/lyenv_sdk.py is injected and importable",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "#!/usr/bin/env python3\n# Demo stdio command: read request, write one-line mutations via SDK.\nimport time\nfrom lyenv_sdk import read_request, log, plugin_write_config, respond_ok\n\ndef main():\n    req = read_request()\n    # one-liner: write plugin local config\n    plugin_write_config('hello.enabled', True, scope='plugin')\n    # write global config\n    plugin_write_config('demo.last_run_at', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), scope='global')\n    log(f'os={req.get('system',{})}')\n    respond_ok('ok')\n\nif __name__ == '__main__':\n    main()\n",
+      "ports": {
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "sdk_test_bash",
+    "label": "SDK Self-Test (Bash)",
+    "color": "#0ea5e9",
+    "category": "Shell",
+    "description": "Verify scripts/lyenv_sdk.sh is injected and source-able",
+    "template": {
+      "kind": "code",
+      "language": "bash",
+      "source": "#!/usr/bin/env bash\nset -euo pipefail\n# injected file should exist\nsource ./scripts/lyenv_sdk.sh\nprintf \"sdk_sh_ok\\n\"\n",
+      "ports": {
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "sdk_test_node",
+    "label": "SDK Self-Test (Node)",
+    "color": "#22c55e",
+    "category": "General",
+    "description": "Verify scripts/lyenv_sdk.js is injected and require-able",
+    "template": {
+      "kind": "code",
+      "language": "javascript",
+      "source": "#!/usr/bin/env node\n// Demo stdio command: read request, write one-line mutations via SDK.\n\nconst sdk = require('./lyenv_sdk.js');\n\nasync function main() {\n  const req = await sdk.read_request();\n\n  sdk.plugin_write_config('hello.enabled', true, 'plugin');\n  sdk.plugin_write_config('demo.last_run_at', new Date().toISOString(), 'global');\n  sdk.log(`os=${JSON.stringify(req.system || {})}`);\n\n  sdk.respond_ok('ok');\n}\n\nmain().catch((err) => {\n  try {\n    sdk.respond_error(err.message || String(err));\n  } catch {\n    process.stderr.write(String(err) + '\n');\n    process.exit(1);\n  }\n});\n",
+      "ports": {
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "text"
+          }
+        ]
+      }
+    }
+  }
+]

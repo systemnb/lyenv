@@ -1,270 +1,214 @@
-# Application configuration
+# =========================
+# lyenv - Minimal Makefile
+# =========================
+
+# Application
 APP_NAME := lyenv
 PKG_MAIN := ./cmd/lyenv
-VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
-COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-BUILDTIME:= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Version info (best-effort, fallback if git/CI metadata is unavailable)
+VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
+COMMIT    := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILDTIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Build flags
-LDFLAGS  := -X lyenv/internal/version.Version=$(VERSION) \
-            -X lyenv/internal/version.Commit=$(COMMIT) \
-            -X lyenv/internal/version.BuildTime=$(BUILDTIME)
+LDFLAGS := -X lyenv/internal/version.Version=$(VERSION) \
+           -X lyenv/internal/version.Commit=$(COMMIT) \
+           -X lyenv/internal/version.BuildTime=$(BUILDTIME)
 
-# Directories
+# Output
 BIN_DIR  := ./dist
 BIN_PATH := $(BIN_DIR)/$(APP_NAME)
 
-# Platform detection
-UNAME_S := $(shell uname -s)
-UNAME_M := $(shell uname -m)
-
-# Go command detection
+# Go tool
 GO_CMD := go
-GO_VERSION_MIN := 1.21
 
-# Colors for better output
-RED    := \033[0;31m
-GREEN  := \033[0;32m
-YELLOW := \033[0;33m
-BLUE   := \033[0;34m
-CYAN   := \033[0;36m
-RESET  := \033[0m
+# Colors (optional)
+GREEN := \033[0;32m
+YELLOW:= \033[0;33m
+BLUE  := \033[0;34m
+RESET := \033[0m
 
-.PHONY: all build build-all clean install uninstall check-go check-go-version help install-go ensure-go
+# Allow targeted builds (e.g., make build-target TARGET_OS=android TARGET_ARCH=arm64)
+TARGET_OS   ?= $(shell $(GO_CMD) env GOOS)
+TARGET_ARCH ?= $(shell $(GO_CMD) env GOARCH)
+
+GUI_FRONTEND_DIR := ./gui-mvp/frontend
+GUI_BACKEND_DIR  := ./gui-mvp/backend
+GUI_BIN_NAME     := lyenv-gui
+GUI_BIN_PATH     := $(BIN_DIR)/$(GUI_BIN_NAME)$(if $(filter $(TARGET_OS),windows),.exe,)
+
+.PHONY: all help build build-target build-all clean test tidy fmt
 
 .DEFAULT_GOAL := help
 
-help: ## Show this help message
-	@echo "$(GREEN)$(APP_NAME) Build System$(RESET)"
+help: ## Show this help
+	@echo "$(GREEN)$(APP_NAME) — Minimal Build Targets$(RESET)"
 	@echo
-	@echo "$(YELLOW)Usage:$(RESET)"
-	@echo "  make [target]"
+	@echo "  make build           # Build for current platform"
+	@echo "  make build-target    # Build for TARGET_OS/TARGET_ARCH (vars below)"
+	@echo "  make build-all       # Build for common platforms (incl. Android)"
+	@echo "  make clean           # Remove ./dist and go build cache"
+	@echo "  make test            # Run tests"
+	@echo "  make tidy            # go mod tidy"
+	@echo "  make fmt             # go fmt ./..."
 	@echo
-	@echo "$(YELLOW)Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(RESET) %s\n", $$1, $$2}'
+	@echo "$(YELLOW)Variables for build-target:$(RESET)"
+	@echo "  TARGET_OS   (default: $$($(GO_CMD) env GOOS))"
+	@echo "  TARGET_ARCH (default: $$($(GO_CMD) env GOARCH))"
 	@echo
+	@echo "$(YELLOW)Examples:$(RESET)"
+	@echo "  make build"
+	@echo "  make build-target TARGET_OS=windows TARGET_ARCH=amd64"
+	@echo "  make build-target TARGET_OS=android TARGET_ARCH=arm64"
+	@echo "  make build-all"
 
-check-go: ## Check if Go is installed
-	@echo "$(BLUE)Checking Go installation...$(RESET)"
-	@if ! command -v $(GO_CMD) >/dev/null 2>&1; then \
-		echo "$(RED)ERROR: Go is not installed!$(RESET)"; \
-		echo "$(CYAN)Attempting to install Go...$(RESET)"; \
-		$(MAKE) install-go; \
-		if ! command -v $(GO_CMD) >/dev/null 2>&1; then \
-			echo "$(RED)Failed to install Go automatically$(RESET)"; \
-			echo "$(YELLOW)Please install Go manually: https://golang.org/dl/$(RESET)"; \
-			exit 127; \
-		fi; \
-	fi
-	@echo "$(GREEN)✓ Go is installed$(RESET)"
+all: build ## Default: build
 
-check-go-version: check-go ## Check if Go version is sufficient
-	@echo "$(BLUE)Checking Go version...$(RESET)"
-	@GO_VERSION=$$($(GO_CMD) version | sed -E 's/.*go([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/'); \
-	GO_VERSION_MAJOR=$$(echo $$GO_VERSION | cut -d. -f1); \
-	GO_VERSION_MINOR=$$(echo $$GO_VERSION | cut -d. -f2); \
-	REQUIRED_MAJOR=$$(echo $(GO_VERSION_MIN) | cut -d. -f1); \
-	REQUIRED_MINOR=$$(echo $(GO_VERSION_MIN) | cut -d. -f2); \
-	if [ $$GO_VERSION_MAJOR -lt $$REQUIRED_MAJOR ] || \
-	   { [ $$GO_VERSION_MAJOR -eq $$REQUIRED_MAJOR ] && [ $$GO_VERSION_MINOR -lt $$REQUIRED_MINOR ]; }; then \
-		echo "$(RED)ERROR: Go version $$GO_VERSION is too old!$(RESET)"; \
-		echo "$(YELLOW)Required: Go $(GO_VERSION_MIN) or newer$(RESET)"; \
-		echo "$(CYAN)Attempting to upgrade Go...$(RESET)"; \
-		$(MAKE) install-go; \
-		GO_VERSION=$$($(GO_CMD) version | sed -E 's/.*go([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/'); \
-		GO_VERSION_MAJOR=$$(echo $$GO_VERSION | cut -d. -f1); \
-		GO_VERSION_MINOR=$$(echo $$GO_VERSION | cut -d. -f2); \
-		if [ $$GO_VERSION_MAJOR -lt $$REQUIRED_MAJOR ] || \
-		   { [ $$GO_VERSION_MAJOR -eq $$REQUIRED_MAJOR ] && [ $$GO_VERSION_MINOR -lt $$REQUIRED_MINOR ]; }; then \
-			echo "$(RED)Failed to upgrade Go to required version$(RESET)"; \
-			echo "$(YELLOW)Please upgrade Go manually: https://golang.org/dl/$(RESET)"; \
-			exit 1; \
-		fi; \
-	fi
-	@echo "$(GREEN)✓ Go version $$GO_VERSION meets requirement ($(GO_VERSION_MIN) min)$(RESET)"
-
-install-go: ## Install or upgrade Go automatically
-	@echo "$(CYAN)Installing/upgrading Go...$(RESET)"
-	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		echo "$(YELLOW)macOS detected, using Homebrew...$(RESET)"; \
-		if command -v brew >/dev/null 2>&1; then \
-			echo "Upgrading Go via Homebrew..."; \
-			brew update; \
-			brew upgrade go; \
-		else \
-			echo "$(RED)Homebrew not found. Please install Homebrew first.$(RESET)"; \
-			echo "Visit: https://brew.sh/"; \
-			exit 1; \
-		fi; \
-	elif [ "$(UNAME_S)" = "Linux" ]; then \
-		echo "$(YELLOW)Linux detected, checking distribution...$(RESET)"; \
-		if [ -f /etc/os-release ]; then \
-			. /etc/os-release; \
-			if [ "$$ID" = "ubuntu" ] || [ "$$ID" = "debian" ]; then \
-				echo "Ubuntu/Debian detected, adding PPA and installing Go..."; \
-				echo "$(YELLOW)Adding longsleep/golang-backports PPA...$(RESET)"; \
-				sudo apt-get update; \
-				sudo apt-get install -y software-properties-common; \
-				sudo add-apt-repository -y ppa:longsleep/golang-backports; \
-				sudo apt-get update; \
-				echo "$(YELLOW)Installing Go $(GO_VERSION_MIN)+...$(RESET)"; \
-				sudo apt-get install -y golang-go; \
-			elif [ "$$ID" = "centos" ] || [ "$$ID" = "rhel" ] || [ "$$ID" = "fedora" ]; then \
-				echo "RHEL/CentOS/Fedora detected, installing via package manager..."; \
-				if command -v dnf >/dev/null 2>&1; then \
-					sudo dnf install -y golang; \
-				elif command -v yum >/dev/null 2>&1; then \
-					sudo yum install -y golang; \
-				fi; \
-			elif [ "$$ID" = "arch" ] || [ "$$ID" = "manjaro" ]; then \
-				echo "Arch/Manjaro detected, installing via pacman..."; \
-				sudo pacman -Sy --noconfirm go; \
-			else \
-				echo "$(RED)Unsupported Linux distribution.$(RESET)"; \
-				echo "Please install Go manually from: https://golang.org/dl/"; \
-				exit 1; \
-			fi; \
-		else \
-			echo "$(RED)Could not detect Linux distribution.$(RESET)"; \
-			echo "Please install Go manually from: https://golang.org/dl/"; \
-			exit 1; \
-		fi; \
-	elif [ "$(UNAME_S)" = "Windows_NT" ]; then \
-		echo "$(RED)Windows detected - cannot install Go automatically.$(RESET)"; \
-		echo "Please download and install Go from: https://golang.org/dl/"; \
-		exit 1; \
-	else \
-		echo "$(RED)Unsupported operating system: $(UNAME_S)$(RESET)"; \
-		echo "Please install Go manually from: https://golang.org/dl/"; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)✓ Go installation/upgrade complete$(RESET)"
-
-ensure-go: check-go-version ## Ensure Go is installed and at the right version
-	@echo "$(GREEN)✓ Go is ready$(RESET)"
-
-all: build ## Build the application (default)
-
-build: ensure-go ## Build the application for current platform
-	@echo "$(BLUE)Building $(APP_NAME) $(VERSION) (commit $(COMMIT))...$(RESET)"
+build: ## Build for current platform
+	@echo "$(BLUE)Building $(APP_NAME) $(VERSION) (commit $(COMMIT)) for $$(go env GOOS)/$$(go env GOARCH)...$(RESET)"
 	@mkdir -p $(BIN_DIR)
 	@$(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_PATH) $(PKG_MAIN)
 	@echo "$(GREEN)✓ Build complete$(RESET)"
-	@echo "  Binary: $(BIN_PATH)"
-	@echo "  Platform: $(UNAME_S)/$(UNAME_M)"
+	@echo "  -> $(BIN_PATH)"
 
-build-all: ensure-go ## Build for all major platforms
-	@echo "$(BLUE)Building $(APP_NAME) for all platforms...$(RESET)"
+build-target: ## Build for TARGET_OS/TARGET_ARCH (e.g., make build-target TARGET_OS=android TARGET_ARCH=arm64)
+	@echo "$(BLUE)Building $(APP_NAME) $(VERSION) for $(TARGET_OS)/$(TARGET_ARCH)...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@echo "$(YELLOW)Building for Linux...$(RESET)"
-	@GOOS=linux GOARCH=amd64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-linux-amd64 $(PKG_MAIN)
-	@GOOS=linux GOARCH=arm64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-linux-arm64 $(PKG_MAIN)
-	@echo "$(YELLOW)Building for macOS...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-darwin-amd64 $(PKG_MAIN)
-	@GOOS=darwin GOARCH=arm64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-darwin-arm64 $(PKG_MAIN)
-	@echo "$(YELLOW)Building for Windows...$(RESET)"
-	@GOOS=windows GOARCH=amd64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-windows-amd64.exe $(PKG_MAIN)
-	@echo "$(GREEN)✓ Cross-compilation complete$(RESET)"
-	@echo "  Binaries are in $(BIN_DIR)/"
-	@ls -la $(BIN_DIR)/
+	@GOOS=$(TARGET_OS) GOARCH=$(TARGET_ARCH) $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' \
+	  -o $(BIN_DIR)/$(APP_NAME)-$(TARGET_OS)-$(TARGET_ARCH)$(if $(filter $(TARGET_OS),windows),.exe,) \
+	  $(PKG_MAIN)
+	@echo "$(GREEN)✓ Cross build complete$(RESET)"
+	@ls -la $(BIN_DIR) | sed -n '1,999p' >/dev/null 2>&1 || true
 
-clean: ## Clean build artifacts
+build-all: ## Build for common platforms (linux/darwin/windows/android)
+	@echo "$(BLUE)Building $(APP_NAME) for common platforms...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@echo "$(YELLOW)linux/amd64$(RESET)";   GOOS=linux   GOARCH=amd64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-linux-amd64   $(PKG_MAIN)
+	@echo "$(YELLOW)linux/arm64$(RESET)";   GOOS=linux   GOARCH=arm64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-linux-arm64   $(PKG_MAIN)
+	@echo "$(YELLOW)darwin/amd64$(RESET)";  GOOS=darwin  GOARCH=amd64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-darwin-amd64  $(PKG_MAIN)
+	@echo "$(YELLOW)darwin/arm64$(RESET)";  GOOS=darwin  GOARCH=arm64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-darwin-arm64  $(PKG_MAIN)
+	@echo "$(YELLOW)windows/amd64$(RESET)"; GOOS=windows GOARCH=amd64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-windows-amd64.exe $(PKG_MAIN)
+	@echo "$(YELLOW)android/arm64$(RESET)"; GOOS=android GOARCH=arm64 $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-android-arm64 $(PKG_MAIN)
+	@echo "$(YELLOW)android/arm$(RESET)";   GOOS=android GOARCH=arm   $(GO_CMD) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME)-android-arm   $(PKG_MAIN)
+	@echo "$(GREEN)✓ Cross compilation complete$(RESET)"
+	@ls -la $(BIN_DIR)
+
+clean: ## Clean build artifacts and go build cache
 	@echo "$(BLUE)Cleaning...$(RESET)"
 	@rm -rf $(BIN_DIR)
 	@$(GO_CMD) clean -cache
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
 
-install: build ## Build and install the application
-	@echo "$(BLUE)Installing $(APP_NAME)...$(RESET)"
-	@if [ -f "scripts/install.sh" ]; then \
-		bash scripts/install.sh "$(BIN_PATH)" "$(APP_NAME)"; \
-	else \
-		echo "$(YELLOW)Warning: install.sh not found, copying binary...$(RESET)"; \
-		if [ "$(UNAME_S)" = "Darwin" ] || [ "$(UNAME_S)" = "Linux" ]; then \
-			sudo cp $(BIN_PATH) /usr/local/bin/; \
-			echo "$(GREEN)✓ Installed to /usr/local/bin/$(APP_NAME)$(RESET)"; \
-		else \
-			echo "$(RED)ERROR: Automatic installation not supported for $(UNAME_S)$(RESET)"; \
-			exit 1; \
-		fi; \
-	fi
-
-uninstall: ## Uninstall the application
-	@echo "$(BLUE)Uninstalling $(APP_NAME)...$(RESET)"
-	@if [ -f "scripts/uninstall.sh" ]; then \
-		bash scripts/uninstall.sh "$(APP_NAME)"; \
-	else \
-		if [ "$(UNAME_S)" = "Darwin" ] || [ "$(UNAME_S)" = "Linux" ]; then \
-			if [ -f "/usr/local/bin/$(APP_NAME)" ]; then \
-				sudo rm -f /usr/local/bin/$(APP_NAME); \
-				echo "$(GREEN)✓ Uninstalled from /usr/local/bin/$(RESET)"; \
-			else \
-				echo "$(YELLOW)Not installed in /usr/local/bin/$(RESET)"; \
-			fi; \
-		else \
-			echo "$(RED)ERROR: Automatic uninstallation not supported for $(UNAME_S)$(RESET)"; \
-			exit 1; \
-		fi; \
-	fi
-
-test: ensure-go ## Run tests
-	@echo "$(BLUE)Running tests...$(RESET)"
+test: ## Run tests
 	@$(GO_CMD) test ./... -v
-	@echo "$(GREEN)✓ Tests complete$(RESET)"
 
-deps: ensure-go ## Download dependencies
-	@echo "$(BLUE)Downloading dependencies...$(RESET)"
-	@$(GO_CMD) mod download
-	@echo "$(GREEN)✓ Dependencies downloaded$(RESET)"
-
-tidy: ensure-go ## Tidy go.mod
-	@echo "$(BLUE)Tidying go.mod...$(RESET)"
+tidy: ## go mod tidy
 	@$(GO_CMD) mod tidy
-	@echo "$(GREEN)✓ go.mod tidy complete$(RESET)"
 
-fmt: ensure-go ## Format Go code
-	@echo "$(BLUE)Formatting code...$(RESET)"
+fmt: ## go fmt ./...
 	@$(GO_CMD) fmt ./...
-	@echo "$(GREEN)✓ Format complete$(RESET)"
 
-lint: ensure-go ## Run linter (if available)
-	@echo "$(BLUE)Running linter...$(RESET)"
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+
+.PHONY: install uninstall
+
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+
+# Termux default (user can still override PREFIX/BINDIR)
+ifeq ($(shell uname -o 2>/dev/null),Android)
+  PREFIX ?= /data/data/com.termux/files/usr
+  BINDIR ?= $(PREFIX)/bin
+endif
+
+GUI_FRONTEND_DIR := ./gui-mvp/frontend
+GUI_BACKEND_DIR  := ./gui-mvp/backend
+GUI_BIN_NAME     := lyenv-gui
+GUI_BIN_PATH     := $(BIN_DIR)/$(GUI_BIN_NAME)$(if $(filter $(TARGET_OS),windows),.exe,)
+
+.PHONY: gui-assets build-gui clean-gui install uninstall
+
+gui-assets:
+	@echo "$(BLUE)Building GUI frontend (vite)...$(RESET)"
+	@cd $(GUI_FRONTEND_DIR) && npm install
+	@cd $(GUI_FRONTEND_DIR) && npm run build:prod
+	@echo "$(GREEN)✓ GUI frontend built and copied to backend/dist$(RESET)"
+
+build-gui: gui-assets
+	@echo "$(BLUE)Building GUI backend binary...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@cd $(GUI_BACKEND_DIR) && $(GO_CMD) build -trimpath -o ../../$(GUI_BIN_PATH) .
+	@echo "$(GREEN)✓ GUI backend build complete$(RESET)"
+	@echo "  -> $(GUI_BIN_PATH)"
+
+install: build build-gui
+	@echo "Installing $(APP_NAME) and $(GUI_BIN_NAME) to $(BINDIR)..."
+	@if [ "$$OS" = "Windows_NT" ]; then \
+	  echo "Windows detected."; \
+	  echo "Please manually copy:"; \
+	  echo "  dist\\$(APP_NAME)-windows-amd64.exe -> a directory in PATH as lyenv.exe"; \
+	  echo "  dist\\$(GUI_BIN_NAME)-windows-amd64.exe -> a directory in PATH as lyenv-gui.exe"; \
 	else \
-		echo "$(YELLOW)golangci-lint not found, installing...$(RESET)"; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
-		golangci-lint run; \
+	  install -d -m 0755 "$(BINDIR)"; \
+	  install -m 0755 "$(BIN_PATH)" "$(BINDIR)/$(APP_NAME)"; \
+	  install -m 0755 "$(GUI_BIN_PATH)" "$(BINDIR)/$(GUI_BIN_NAME)"; \
+	  echo "✔ Installed $(APP_NAME) into $(BINDIR)"; \
+	  echo "✔ Installed $(GUI_BIN_NAME) into $(BINDIR)"; \
+	  echo "Initializing global GUI dir: $$HOME/.lyenv/gui ..."; \
+	  mkdir -p "$$HOME/.lyenv/gui/logs"; \
+	  if [ ! -f "$$HOME/.lyenv/gui/config.yaml" ]; then \
+	    printf '%s\n' \
+	      'version: 1' \
+	      'envs:' \
+	      '  pinned: []' \
+	      '  scan:' \
+	      "    - root: \"$$HOME/lyenv-envs\"" \
+	      '      depth: 3' \
+	      '      pattern: "lyenv.yaml"' \
+	      "    - root: \"$$HOME/projects\"" \
+	      '      depth: 3' \
+	      '      pattern: "lyenv.yaml"' \
+	      'server:' \
+	      '  addr: "127.0.0.1:18888"' \
+	      > "$$HOME/.lyenv/gui/config.yaml"; \
+	    echo "✔ Created $$HOME/.lyenv/gui/config.yaml"; \
+	  else \
+	    echo "✔ Kept existing $$HOME/.lyenv/gui/config.yaml"; \
+	  fi; \
+	  echo "Done."; \
 	fi
-	@echo "$(GREEN)✓ Lint complete$(RESET)"
 
-# Quick development commands
-dev: ensure-go ## Build and run for development
-	@echo "$(BLUE)Running in development mode...$(RESET)"
-	@$(GO_CMD) run $(PKG_MAIN)
-
-watch: ensure-go ## Watch for changes and rebuild (requires fswatch on macOS or inotify-tools on Linux)
-	@echo "$(BLUE)Watching for changes...$(RESET)"
-	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		if ! command -v fswatch >/dev/null 2>&1; then \
-			echo "$(YELLOW)Installing fswatch...$(RESET)"; \
-			brew install fswatch; \
-		fi; \
-		fswatch -o . | while read; do make build; done; \
-	elif [ "$(UNAME_S)" = "Linux" ]; then \
-		if ! command -v inotifywait >/dev/null 2>&1; then \
-			echo "$(YELLOW)Installing inotify-tools...$(RESET)"; \
-			if command -v apt >/dev/null 2>&1; then \
-				sudo apt install inotify-tools; \
-			elif command -v yum >/dev/null 2>&1; then \
-				sudo yum install inotify-tools; \
-			fi; \
-		fi; \
-		while true; do \
-			inotifywait -r -e modify -e create -e delete .; \
-			make build; \
-		done; \
+uninstall:
+	@echo "Uninstalling $(APP_NAME) and $(GUI_BIN_NAME) from $(BINDIR)..."
+	@if [ "$$OS" = "Windows_NT" ]; then \
+	  echo "Windows detected."; \
+	  echo "Please manually remove lyenv(.exe) and lyenv-gui(.exe) from your PATH directory."; \
 	else \
-		echo "$(RED)File watching not supported on $(UNAME_S)$(RESET)"; \
+	  rm -f "$(BINDIR)/$(APP_NAME)" || true; \
+	  rm -f "$(BINDIR)/$(GUI_BIN_NAME)" || true; \
+	  echo "✔ Removed binaries from $(BINDIR)"; \
+	  echo "NOTE: global GUI data kept at $$HOME/.lyenv/gui (remove manually if needed)."; \
 	fi
+
+
+# --- GUI ---
+.PHONY: gui-assets build-gui clean-gui
+
+gui-assets: ## Build GUI frontend assets and copy to backend/dist (vite build:prod)
+	@echo "$(BLUE)Building GUI frontend (vite)...$(RESET)"
+	@cd $(GUI_FRONTEND_DIR) && npm install
+	@cd $(GUI_FRONTEND_DIR) && npm run build:prod
+	@echo "$(GREEN)✓ GUI frontend built and copied to backend/dist$(RESET)"
+
+build-gui: gui-assets ## Build GUI backend binary (lyenv-gui) into ./dist
+	@echo "$(BLUE)Building GUI backend binary...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@cd $(GUI_BACKEND_DIR) && $(GO_CMD) build -trimpath -o ../../$(GUI_BIN_PATH) .
+	@echo "$(GREEN)✓ GUI backend build complete$(RESET)"
+	@echo "  -> $(GUI_BIN_PATH)"
+
+clean-gui: ## Remove GUI build outputs
+	@rm -rf $(GUI_BACKEND_DIR)/dist
+	@rm -f $(GUI_BIN_PATH)

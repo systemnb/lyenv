@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "target": "scripts/lyenv_sdk.py",
+      "source": "/sdk/lyenv_sdk.py",
+      "when": { "always": true }
+    },
+    {
+      "target": "scripts/lyenv_sdk.sh",
+      "source": "/sdk/lyenv_sdk.sh",
+      "when": { "always": true }
+    },
+    {
+      "target": "scripts/lyenv_sdk.js",
+      "source": "/sdk/lyenv_sdk.js",
+      "when": { "always": true }
+    }
+  ]
+}

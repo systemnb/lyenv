@@ -1,0 +1,49 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr 240px;
+  height: 100%;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.canvas {
+  height: 100%;
+}
+
+.terminal {
+  border-top: 1px solid #eee;
+}
+
+/* Lock the app to viewport size and hide global scroll */
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  /* no global scroll */
+}
+
+/* Optional: prettier thin scrollbar (WebKit) */
+aside::-webkit-scrollbar, .sidebar-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+aside::-webkit-scrollbar-thumb, .sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+aside::-webkit-scrollbar-thumb:hover, .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

@@ -40,24 +40,38 @@ Usage:
   lyenv plugin center sync            Cache plugin center index into .lyenv/registry/index.yaml|json
   lyenv plugin search <KEYWORDS...>   Search plugin center by name/description keywords
   
-  lyenv run <PLUGIN> <COMMAND> [--merge=override|append|keep] [--timeout=<sec>] [--fail-fast|--keep-going] [-- ...args]
+  lyenv run <PLUGIN> <COMMAND> [--merge=override|append|keep] [--timeout=<sec>] [--fail-fast|--keep-going] [...args]
                                      Run a plugin command (single or multi-step). 'stdio' returns mutations; 'shell' prints logs.
+  lyenv gui start [--addr=127.0.0.1:18888] [--open]
+                                     Start GUI server in background (global mode). Requires 'lyenv-gui' binary.
+                                     Global files:
+                                       - PID:   ~/.lyenv/gui/gui.pid
+                                       - Logs:  ~/.lyenv/gui/logs/gui.log
+                                       - Config:~/.lyenv/gui/config.yaml
 
-Defaults written by 'lyenv create':
-  - Structure: .lyenv/{logs,registry}, bin/, cache/, plugins/, workspace/
-  - .lyenv/registry/installed.yaml: empty list (plugins: [])
-  - lyenv.yaml:
-      env: { name: "default", platform: "auto" }
-      path: { bin: "./bin", cache: "./cache", workspace: "./workspace" }
-      plugins:
-        installed: []
-        registry_url: "https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml"
-        registry_format: "yaml"
-        default_version_strategy: "latest"
-      config:
-        use_container: false
-        pkg_manager: "auto"
-        network: { proxy_url: "" }     # set proxy if needed
+  lyenv gui stop                      Stop GUI server (best-effort using pid file).
+  lyenv gui status                    Show GUI server status (running/stopped).
+  lyenv gui open [--addr=127.0.0.1:18888]
+                                     Open GUI in default browser.
+                                     On Android/Termux: uses 'termux-open-url' if available.
+
+  lyenv gui add <DIR> [--name=<ENV_NAME>] [--create=1]
+                                     Register a directory as a GUI-available environment.
+                                     - If <DIR> is NOT a lyenv env yet, it will auto 'create' + 'init' when --create=1.
+                                     - When --create is omitted, it defaults to 1 (auto create/init) for convenience.
+                                     - Registered envs are stored in global GUI config: ~/.lyenv/gui/config.yaml (envs.pinned).
+
+  lyenv gui list [--json] [--all]
+                                     List GUI-registered environments.
+                                     - Default: show only valid envs (existing dirs).
+                                     - With --all: also show missing entries (stale items in config).
+
+  lyenv gui remove <NAME|PATH>
+                                     Remove one registered env by name or absolute/relative path.
+
+  lyenv gui prune
+                                     Remove all missing (deleted) env entries from GUI registry config (cleanup stale list).
+
 
 Examples:
   lyenv create android-env

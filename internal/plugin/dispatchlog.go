@@ -8,13 +8,16 @@ import (
 )
 
 type DispatchRecord struct {
-	TS         string   `json:"ts"`
-	Plugin     string   `json:"plugin"`
-	Command    string   `json:"command"`
-	Args       []string `json:"args"`
-	Status     string   `json:"status"`
-	LogFile    string   `json:"log_file"`
-	DurationMS int64    `json:"duration_ms"`
+	ID            string   `json:"id"`
+	TS            string   `json:"ts"`
+	Plugin        string   `json:"plugin"`
+	Command       string   `json:"command"`
+	Args          []string `json:"args"`
+	Status        string   `json:"status"`
+	LogFile       string   `json:"log_file"`
+	PluginLogFile string   `json:"plugin_log_file,omitempty"`
+	Result        string   `json:"result,omitempty"`
+	DurationMS    int64    `json:"duration_ms"`
 }
 
 func writeDispatchLog(envDir string, rec DispatchRecord) {
