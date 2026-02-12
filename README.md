@@ -1,344 +1,245 @@
-# lyenv — Directory-based Isolated Environment Manager
+# lyenv — Directory‑based Isolated Environment Manager  
+**with Visual Workflow GUI**
 
-> This README is provided in [English](README.md) and [中文](README_zh.md) (Chinese).  
-> 语言切换：下方包含 [English](README.md) 和 [中文](README_zh.md)，内容一致。  
-> License: See `LICENSE` at the repository root.
-
----
-
-## English Version
-
-### 1. What is lyenv? (Project Meaning and Goals)
-
-**lyenv** is a simple, robust, and language-agnostic environment manager based on a **directory layout**. It lets you:
-
-- Create and activate isolated workspaces (`bin/`, `plugins/`, `workspace/`, `.lyenv/`).
-- Install and run **plugins** implemented in any language (Python, Node.js, C/C++, etc.), via:
-  - **shell executor** (run command lines and capture logs),
-  - **stdio executor** (exchange JSON over stdin/stdout, enabling structured results and configuration mutations).
-- Merge **structured configuration** from plugins (`mutations`) into:
-  - global config (`lyenv.yaml`),
-  - plugin-local config (`plugins/<INSTALL_NAME>/config.yaml` or `.json` by extension).
-- Record per-command **JSON Lines logs** and a global **dispatch log** for observability.
-- Resolve plugins by **name** from a **Plugin Center (Monorepo)** with subdirs, optionally using **archive + SHA‑256** integrity verification.
-
-**Why this matters**:
-
-- **Language-agnostic**: Any tool that can run in shell or read/write JSON over stdio is supported.
-- **Reproducible & Traceable**: Directory-based design, JSON logs, and dispatch records simplify auditing and debugging.
-- **Structured orchestration**: `stdio` enables returning structured results and safe config mutations, avoiding brittle text scraping.
-- **Scalable distribution**: Plugin Center can host many plugins as **subdirectories** or **prebuilt archives** with SHA‑256 verification.
+> This README is provided in **English** and **中文**.  
+> License: see `LICENSE`.
 
 ---
 
-### 2. Quick Start
+## 1. What is lyenv?
 
-#### 2.1 Build
+**lyenv** is a **directory‑based isolated environment manager** with a strong focus on:
+
+- **Reproducible execution**
+- **Language‑agnostic plugins**
+- **Structured, traceable automation**
+- **Visual workflow authoring via GUI**
+
+At its core, lyenv treats **a directory as an environment**, and **a workflow as a plugin**.
+
+> **CLI is the runtime.  
+> GUI is the workflow compiler.**
+
+---
+
+## 2. Why lyenv?
+
+Traditional tools often fall into one of these traps:
+
+- Scripts are easy to write but hard to maintain
+- GUI tools are easy to click but hard to automate
+- Plugins are either too heavyweight (containers) or too weak (shell snippets)
+- Outputs are text logs instead of structured results
+
+**lyenv solves this by combining:**
+
+✅ Directory‑based environments  
+✅ Structured plugin execution (stdio JSON)  
+✅ Deterministic logs and dispatch records  
+✅ A GUI that *generates real CLI plugins*, not a toy runtime
+
+---
+
+## 3. Core Concepts
+
+### 3.1 Environment = Directory
+
+An environment is simply a directory created by lyenv:
+
+```text
+my-env/
+├─ bin/
+├─ plugins/
+├─ workspace/
+├─ cache/
+├─ .lyenv/
+│  ├─ logs/
+│  ├─ registry/
+│  └─ dispatch.log
+└─ lyenv.yaml
+```
+
+This makes environments:
+
+- Portable
+- Inspectable
+- Easy to back up or version‑control
+
+### 3.2 Plugin = Executable Workflow
+
+A plugin is a directory with a `manifest.yaml|json` describing:
+
+- Commands
+- Executors (shell or stdio)
+- Multi‑step execution
+- Exposed shims
+- Config files
+
+Plugins can be written in any language.
+
+### 3.3 stdio Execution (Key Feature)
+
+In stdio mode, plugins communicate with lyenv via JSON:
+
+- **Input:** JSON via stdin  
+- **Output:** JSON via stdout
+
+This enables:
+
+- Structured logs
+- Returning final results
+- Safe configuration mutations
+- Deterministic behavior (no log scraping)
+
+---
+
+## 4. The GUI: Visual Workflow Compiler (Recommended)
+
+✅ **Recommended way to build workflows**
+
+The GUI is **not** a separate runtime.  
+It is a visual compiler that turns workflows into **real lyenv plugins**.
+
+### 4.1 What the GUI Does
+
+In the GUI you can:
+
+- Draw workflows using nodes and edges
+- Group nodes into logical workflow groups
+- Each group becomes one CLI command
+- Export the workflow as a multi‑step stdio plugin
+
+### 4.2 Run Flow (GUI → CLI → Logs)
+
+When you click **Run** in the GUI:
+
+1. Choose a workflow group  
+2. GUI exports the workflow into a temporary plugin  
+3. Plugin is installed into the selected lyenv environment  
+4. You enter runtime arguments  
+5. lyenv executes the plugin via stdio  
+6. Logs stream in real‑time via WebSocket  
+7. Plugin is automatically cleaned up  
+8. Logs are persisted under `.lyenv/logs/dispatch/`
+
+✅ The same plugin can be run later via CLI if exported explicitly.
+
+---
+
+## 5. Quick Start
+
+### 5.1 Build
 
 ```bash
 make build
-# or
-go build -o ./dist/lyenv ./cmd/lyenv
+make build-gui
 ```
 
-#### 2.2 Create, Init, Activate
+### 5.2 Create an Environment
 
 ```bash
-./dist/lyenv create ./my-env
-./dist/lyenv init ./my-env
-cd ./my-env
-eval "$("./../dist/lyenv" activate)"
-```
-
-After create:
-
-Directory structure:
-```
-.lyenv/, .lyenv/logs, .lyenv/registry, bin/, cache/, plugins/, workspace/.
-```
-
-`lyenv.yaml` defaults (center URL included):
-
-```yaml
-env:
-  name: "default"
-  platform: "auto"
-path:
-  bin: "./bin"
-  cache: "./cache"
-  workspace: "./workspace"
-plugins:
-  installed: []
-  registry_url: "https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml"
-  registry_format: "yaml"
-  default_version_strategy: "latest"
-config:
-  use_container: false
-  pkg_manager: "auto"
-  network:
-    proxy_url: ""   # set to e.g. http://127.0.0.1:7890 if needed
-```
-
-Registry file initialized: `.lyenv/registry/installed.yaml`:
-```yaml
-plugins: []
+lyenv create ./demo
+lyenv init ./demo
+cd demo
+eval "$(lyenv activate)"
 ```
 
 ---
 
-### 3. Commands: Tutorials and Usage
+## 6. Start the GUI
 
-All program outputs are in English. Below are the major commands.
+```bash
+lyenv gui start --open
+```
 
-#### 3.1 Environment
+Register an environment for GUI usage:
+
+```bash
+lyenv gui add ./demo --name=demo
+```
+
+---
+
+## 7. Running Workflows (GUI)
+
+1. Open GUI in browser  
+2. Select an environment  
+3. Draw your workflow  
+4. Group nodes into workflows  
+5. Click **Run**  
+6. Select workflow group  
+7. Enter arguments  
+8. Watch logs in the built‑in console  
+
+Logs are saved even if the temporary plugin is auto‑cleaned.
+
+---
+
+## 8. CLI Usage (Core Commands)
+
+### Environment
 
 ```bash
 lyenv create <DIR>
-# Create a new environment with default folders and config
-
 lyenv init <DIR>
-# Verify/repair an existing environment (idempotent)
-
 lyenv activate
-# Print shell snippet; typically: eval "$(lyenv activate)"
-# The snippet is robust in non-interactive shells (checks PS1 existence)
 ```
 
-#### 3.2 Config Management
+### GUI Environment Registry
 
 ```bash
-lyenv config set <KEY> <VALUE> [--type=string|int|float|bool|json]
-# Set a value under lyenv.yaml (dot path with type enforcement)
-
-lyenv config get <KEY>
-# Read a value by dot path
-
-lyenv config dump [<KEY>] <FILE>
-# Dump entire config or a specific key to FILE (YAML/JSON by extension)
-
-lyenv config load <FILE> [--merge=override|append|keep]
-# Load YAML or JSON overlay into lyenv.yaml with merge strategy
-
-lyenv config importjson <FILE> <JSON_KEY> [--to=<CONFIG_KEY>] [--type=...] [--merge=...] [--input=1]
-# Import from JSON file (dot path) into lyenv.yaml
-
-lyenv config importyaml <FILE> <YAML_KEY> [--to=<CONFIG_KEY>] [--type=...] [--merge=...] [--input=1]
-# Import from YAML file (dot path) into lyenv.yaml
+lyenv gui add <DIR> [--name=<NAME>]
+lyenv gui list
+lyenv gui remove <NAME|PATH>
+lyenv gui prune
 ```
 
-#### 3.3 Plugin Center and Search
+### Plugins
 
 ```bash
-lyenv plugin center sync
-# Cache center index into .lyenv/registry/index.yaml or .json
-
-lyenv plugin search <KEYWORDS...>
-# Search plugin center by name/description keywords
+lyenv plugin add <PATH>
+lyenv plugin install <NAME>
+lyenv plugin list
+lyenv plugin remove <INSTALL_NAME>
 ```
 
-Center index default: `https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/index.yaml`
-
-You can override via:
-```bash
-lyenv config set plugins.registry_url <URL> --type=string
-```
-
-#### 3.4 Plugin Install / Add / Update / Info / List / Remove
+### Run
 
 ```bash
-lyenv plugin add <PATH> [--name=<INSTALL_NAME>]
-# Install local directory plugin under custom install name
-
-lyenv plugin install <NAME|PATH> [--name=<INSTALL_NAME>] [--repo=<org/repo>] [--ref=<branch|tag|commit|version>] [--source=<url>] [--proxy=<url>]
-# Install from local path, remote repo, source archive or center name
-# - NAME only: resolve from center; prefer archive+sha256 if present, else monorepo subpath
-
-lyenv plugin update <INSTALL_NAME> [--repo=<org/repo>] [--ref=<branch|tag|commit|version>] [--source=<url>] [--proxy=<url>]
-# Update installed plugin (git/center source)
-
-lyenv plugin info <INSTALL_NAME|LOGICAL_NAME>
-# Show manifest details, resolved directory and shims
-
-lyenv plugin list [--json]
-# List installed plugins (JSON for machine-readable)
-
-lyenv plugin remove <INSTALL_NAME> [--force]
-# Uninstall plugin and remove related shims
-# If shell still resolves shim name after removal, run: hash -r
+lyenv run <PLUGIN> <COMMAND> [--json] [--timeout=SEC]
 ```
 
-**Notes**:
+---
 
-- Shims bind to the install name (physical directory under plugins/).
-- Shims prefer env var `LYENV_BIN` path; fallback to lyenv in PATH.
-- Windows shims `.cmd/.ps1` also supported (generation carried but tested here on Linux).
+## 9. Logs and Observability
 
-#### 3.5 Run (Single/Multi-step, shell/stdio, Timeout/Policy)
+- Per‑run logs: `.lyenv/logs/dispatch/<DISPATCH_ID>.log`
+- Global dispatch log: `.lyenv/logs/dispatch.log`
 
-```bash
-lyenv run <PLUGIN> <COMMAND> [--merge=override|append|keep] [--timeout=<sec>] [--fail-fast|--keep-going] [-- ...args]
-# Execute plugin command
-
-# Examples:
-lyenv run testtools run --merge=override --keep-going
-lyenv run testtools slow --timeout=5 --fail-fast
-```
-
-- **shell**: Runs `bash -c "<program + args>"`. Captures stdout/stderr into JSON Lines logs.
-- **stdio**: Sends a JSON request to stdin; expects JSON response with:
-  - `status` (e.g., ok),
-  - `logs` (array of strings echoed to console),
-  - `artifacts` (array of paths),
-  - `mutations`:
-    - `global` (merged into lyenv.yaml),
-    - `plugin` (merged into plugin-local config; original format preserved YAML/JSON by extension).
-
-**Multi-step**: Compose multiple steps (shell/stdio mixed) with `continue_on_error`. Global `--keep-going` overrides per-step; `--fail-fast` stops on first error.
-
-**Timeout**: Global deadline (sec). Uses `exec.CommandContext` so child processes are canceled when deadline is reached.
+Logs are **JSON Lines**, suitable for tooling and automation.
 
 ---
 
-### 4. Manifests and Execution Model
+## 10. Who is lyenv for?
 
-#### 4.1 Manifest Files (YAML or JSON)
-
-Plugin manifests support both formats and the following fields (common subset):
-
-- `name` (string, required)
-- `version` (string, required)
-- `expose` (array of shim names, required)
-- `config.local_file` (optional path to plugin-local config; YAML or JSON by extension)
-- `commands`: array of command specs:
-  - `name` (string, required, unique)
-  - `summary` (string)
-  - Either:
-    - **Single command**:
-      - `executor` (shell or stdio)
-      - `program` (string; command or plugin-relative path)
-      - `args` (array of strings)
-      - `workdir` (string, plugin-relative or absolute)
-      - `env` (map of string environment variables)
-      - `use_stdio` (bool; for stdio)
-    - **Or multi-step**:
-      - `steps`: array of sub-commands with same fields per step, plus `continue_on_error` (bool)
-- `entry`: optional default stdio entry:
-  - `type`: "stdio"
-  - `path` (string)
-  - `args` (array of strings)
-
-#### 4.2 shell vs stdio
-
-- **shell**: best for simple commands without structured return. Logs are captured automatically.
-- **stdio**: best for structured exchange:
-  - Request JSON includes `action`, `args`, `paths`, `system`, `config`, `merge_strategy`, `started_at`.
-  - Response JSON can include `mutations` to be merged safely by core with specified strategy (override/append/keep).
-
-#### 4.3 Permissions and Logs
-
-**Install/update normalize permissions**:
-- Directories: 0755,
-- Regular files: 0644,
-- Files with shebang (`#!/...`): 0755.
-
-**Logs**:
-- Per plugin command: `plugins/<INSTALL_NAME>/logs/YYYY-MM-DD/<COMMAND>-<TIMESTAMP>.log` (JSON Lines: info, stdout, stderr, etc.).
-- Global dispatch log: `.lyenv/logs/dispatch.log`.
+- Developers building repeatable automation
+- Teams needing auditable local workflows
+- Tool authors who want GUI + CLI consistency
+- Anyone tired of fragile shell pipelines
 
 ---
 
-### 5. Plugin Center (Monorepo + Archive+SHA‑256)
+## 11. Philosophy
 
-#### 5.1 Monorepo Structure
-
-A single repository hosts many plugins in `plugins/<NAME>/.` The center index (YAML/JSON) maps `<NAME>` to either:
-
-- `repo`, `ref`, `subpath` (monorepo checkout),
-- or `versions[<ver>].source` (ZIP/TGZ URL) + `versions[<ver>].sha256` for archive distribution.
-
-Center index example (YAML):
-```yaml
-apiVersion: v1
-updatedAt: 2026-01-01T12:00:00Z
-plugins:
-  tester:
-    desc: "Mixed steps demo"
-    repo: "systemnb/lyenv-plugin-center"
-    subpath: "plugins/tester"
-    ref: "main"
-    shims: ["tctl"]
-    versions:
-      "0.1.0":
-        source: "https://raw.githubusercontent.com/systemnb/lyenv-plugin-center/main/artifacts/tester-0.1.0.zip"
-        sha256: "<64 hex sha>"
-        shims: ["tctl"]
-```
-
-#### 5.2 Installation Resolution
-
-- **NAME only**: lyenv will resolve from center:
-  - If `source+sha256` present → download, verify SHA‑256, extract, install.
-  - Else → clone monorepo (shallow) and copy subpath.
-
-#### 5.3 CI in Center Repo
-
-Center repo workflow (PR-based) generates:
-- `artifacts/<NAME>-<VERSION>.zip` with all plugin files,
-- `index.yaml` with source and sha256 entries,
-- creates a PR; upon merging, source raw URLs are valid.
+- **Directories** over databases  
+- **JSON** over text  
+- **Workflows as code**  
+- **GUI as compiler, CLI as runtime**
 
 ---
 
-### 6. CI: E2E Testing (GitHub Actions)
+## 12. License
 
-We provide a workflow (`.github/workflows/e2e.yml`) that:
-
-1. Checks out and builds lyenv,
-2. Sets up Python (PyYAML) for YAML parsing,
-3. Adds `dist/` to PATH,
-4. Runs `scripts/full_e2e_test.sh`:
-   - Environment create/init/activate,
-   - Center sync/search,
-   - Install (center name),
-   - Run (shell+stdio, multi-step),
-   - Verify logs/mutations,
-   - Timeout/fail-fast,
-   - Uninstall and shim removal,
-   - Local plugin add/run/remove,
-   - Archive+SHA‑256 validation (if center provides),
-   - Config dump/load (JSON),
-   - Dispatch log inspection,
-5. Uploads logs as artifacts.
+See `LICENSE`.
 
 ---
-
-### 7. Troubleshooting
-
-- **Shim still present after removal**: flush shell cache `hash -r`; check `type -a <shim>` / `which -a <shim>` for other instances in PATH.
-- **`fork/exec ... no such file or directory` for stdio script**:
-  - Ensure the script has executable bit (`chmod +x`) and LF line endings,
-  - Proper shebang (`#!/usr/bin/env python3`),
-  - `python3` in PATH (consider `manifest.env.PATH`).
-- **Timeouts**: `context deadline exceeded` indicates global deadline; increase `--timeout` or reduce step durations.
-- **Center index missing archive entries**: run center CI to generate `artifacts/*.zip` and `index.yaml` with `source+sha256`, then merge PR.
-
----
-
-### 8. Contributing
-
-1. Add plugins to center repo under `plugins/<NAME>/` with `manifest.yaml|yml|json` and required files.
-2. Center CI will generate artifacts and index via PR.
-3. For local development:
-   ```bash
-   lyenv plugin add ./plugins/<NAME> --name=<INSTALL_NAME>
-   lyenv run <INSTALL_NAME> <COMMAND>
-   ```
-
----
-
-### 9. License
-
-This project is licensed under the terms in [LICENSE](LICENSE).
-
----
-
