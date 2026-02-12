@@ -99,15 +99,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 1) Build frontend assets (Vite) and copy dist -> backend/dist (your script)
           cd gui-mvp/frontend
-          npm ci
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install
+          fi
           npm run build:prod
           cd ../../
 
+          # 2) Build GUI backend inside its OWN module (gui-mvp/backend has its own go.mod)
+          pushd gui-mvp/backend
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath \
-              -o dist/lyenv-gui${{ matrix.exe_ext }} \
-              ./gui-mvp/backend
+              -o ../../dist/lyenv-gui${{ matrix.exe_ext }} \
+              .
+          popd
+
 
       - name: Package artifacts
         shell: bash
