@@ -9,6 +9,14 @@ func Usage() {
 	fmt.Fprintf(os.Stderr, `lyenv - Directory-based isolated environment manager
 
 Usage:
+  lyenv install [--bindir=<DIR>] [--gui=<PATH>] [--init-gui=0|1]
+                                     Install lyenv and lyenv-gui to user bin dir (default: ~/.lyenv/bin)
+                                     Initializes ~/.lyenv/gui/config.yaml and ~/.lyenv/gui/logs (default: init-gui=1)
+
+  lyenv uninstall [--bindir=<DIR>] [--purge-gui=0|1]
+                                     Remove lyenv and lyenv-gui from bin dir (default: ~/.lyenv/bin)
+                                     Keeps ~/.lyenv/gui by default; purge-gui=1 to delete it
+
   lyenv create <DIR>                 Create a new lyenv environment directory with default config and structure
   lyenv init <DIR>                   Verify and repair an existing lyenv environment (idempotent)
   lyenv activate [--shell=bash|zsh|powershell|pwsh|cmd]

@@ -75,7 +75,7 @@ func PluginAddLocal(envDir, srcPath, overrideName string) error {
 	return nil
 }
 
-func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName string) error {
+func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName, wantVersion string) error {
 	pluginsDir := filepath.Join(envDir, "plugins")
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return err
@@ -107,7 +107,7 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName s
 
 	// Case 4: center resolution when only NAME provided
 	if srcType == "" && src != "" {
-		rec, err := ResolveFromCenterMonorepo(envDir, strings.TrimSpace(src), strings.TrimSpace(optRef))
+		rec, err := ResolveFromCenterMonorepo(envDir, strings.TrimSpace(src), strings.TrimSpace(wantVersion))
 		if err != nil {
 			return fmt.Errorf("failed to resolve from plugin center: %w", err)
 		}

@@ -18,6 +18,7 @@ import (
 	"lyenv/internal/env"
 	"lyenv/internal/guictl"
 	"lyenv/internal/plugin"
+	"lyenv/internal/selfinstall"
 	"lyenv/internal/version"
 )
 
@@ -36,6 +37,34 @@ func main() {
 	}
 
 	switch args[0] {
+
+	case "install":
+		flags := config.ParseFlags(args[1:])
+		bindir := strings.TrimSpace(flags["bindir"])
+		gui := strings.TrimSpace(flags["gui"])
+		initGUI := flags["init-gui"] != "0" // default true
+	
+		if err := selfinstall.Install(selfinstall.InstallOptions{
+			BinDir:  bindir,
+			GuiPath: gui,
+			InitGUI: initGUI,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "Install failed: %v\n", err)
+			os.Exit(1)
+		}
+	
+	case "uninstall":
+		flags := config.ParseFlags(args[1:])
+		bindir := strings.TrimSpace(flags["bindir"])
+		purge := flags["purge-gui"] == "1"
+	
+		if err := selfinstall.Uninstall(selfinstall.UninstallOptions{
+			BinDir:   bindir,
+			PurgeGUI: purge,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "Uninstall failed: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "--version":
 		fmt.Printf("lyenv %s (commit %s, built %s)\n", version.Version, version.Commit, version.BuildTime)
@@ -80,7 +109,7 @@ func main() {
 		if len(args) > 1 {
 			flags := config.ParseFlags(args[1:])
 			shellOpt = strings.TrimSpace(flags["shell"])
-	
+
 			// If there are non-flag extra args, treat as error.
 			// config.ParseFlags only parses --k=v style, so any positional would be ignored;
 			// we can detect by checking args that don't start with "--".
@@ -91,12 +120,11 @@ func main() {
 				}
 			}
 		}
-	
+
 		if err := env.CmdActivate(shellOpt); err != nil {
 			fmt.Fprintf(os.Stderr, "Activate failed: %v\n", err)
 			os.Exit(1)
 		}
-	
 
 	case "config":
 		if len(args) < 2 {
@@ -284,10 +312,19 @@ func main() {
 			source := flags["source"]
 			proxy := flags["proxy"]
 			overrideName := flags["name"]
+			Version := strings.TrimSpace(flags["version"])
 
 			if nameOrPath == "" {
 				fmt.Fprintln(os.Stderr, "Error: <NAME|PATH|ZIP> must not be empty")
 				os.Exit(2)
+			}
+
+			if Version == "" && strings.Contains(nameOrPath, "@") && !strings.HasPrefix(nameOrPath, "http") {
+				parts := strings.Split(nameOrPath, "@")
+				if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+					nameOrPath = parts[0]
+					Version = parts[1]
+				}
 			}
 
 			// NEW: local ZIP path install
@@ -304,7 +341,7 @@ func main() {
 				}
 			} else {
 				// existing logic (center by name, local path, repo/ref/source/proxy)
-				if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName); err != nil {
+				if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName, Version); err != nil {
 					fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
 					os.Exit(1)
 				}
