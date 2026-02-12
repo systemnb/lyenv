@@ -3,7 +3,7 @@
 
 > This README is provided in [English](README.md) and [中文](README_zh.md) (Chinese).  
 > 语言切换：下方包含 [English](README.md) 和 [中文](README_zh.md)，内容一致。  
-> License: See `LICENSE` at the repository root.
+> License: See [LICENSE](LICENSE) at the repository root.
 
 ---
 
@@ -248,6 +248,6 @@ Logs are **JSON Lines**, suitable for tooling and automation.
 
 ## 12. License
 
-See `LICENSE`.
+See [LICENSE](LICENSE).
 
 ---
