@@ -198,11 +198,8 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName, 
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
 		}
-		cmd := exec.Command("tar", "-xzf", tmp, "-C", targetDir, "--strip-components=1")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("tar extract failed: %w", err)
+		if err := ExtractTarGz(tmp, targetDir); err != nil {
+			return fmt.Errorf("tar.gz extract failed: %w", err)
 		}
 
 	case "url":
@@ -223,11 +220,8 @@ func PluginAdd(envDir, src, optSource, optRepo, optRef, optProxy, overrideName, 
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
 		}
-		cmd := exec.Command("unzip", "-o", tmp, "-d", targetDir)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("unzip failed: %w", err)
+		if err := ExtractZip(tmp, targetDir); err != nil {
+			return fmt.Errorf("zip extract failed: %w", err)
 		}
 
 	default:

@@ -3,7 +3,6 @@ package plugin
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -26,20 +25,5 @@ func copyDir(src, dst string) error {
 }
 
 func fetchURL(url, outPath, proxy string) error {
-	var cmd *exec.Cmd
-	if _, err := exec.LookPath("curl"); err == nil {
-		args := []string{"-L", "-o", outPath, url}
-		if proxy != "" {
-			args = append([]string{"-x", proxy}, args...)
-		}
-		cmd = exec.Command("curl", args...)
-	} else if _, err := exec.LookPath("wget"); err == nil {
-		args := []string{"-O", outPath, url}
-		cmd = exec.Command("wget", args...)
-	} else {
-		httpDownload(url, outPath, proxy)
-	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return downloadToFile(url, outPath, proxy)
 }
