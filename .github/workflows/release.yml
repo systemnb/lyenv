@@ -99,24 +99,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 1) build frontend -> copy to backend/dist (embed input)
           cd gui-mvp/frontend
           npm ci
           npm run build:prod
           cd ../../
 
-          # 2) build gui backend (embed dist/)
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath \
               -o dist/lyenv-gui${{ matrix.exe_ext }} \
               ./gui-mvp/backend
 
-      - name: Package artifacts (NO sha256, NO commit hash)
+      - name: Package artifacts
         shell: bash
         run: |
           set -euo pipefail
-          ver="${GITHUB_REF_NAME}"   # tag name e.g. v0.2.0
-          out="lyenv-${ver}-${{ matrix.target }}"   # <== name policy: version + platform only
+          ver="${GITHUB_REF_NAME}"
+          out="lyenv-${ver}-${{ matrix.target }}"
 
           mkdir -p package/"$out"
           mkdir -p release
@@ -154,8 +152,7 @@ jobs:
           path: ./release-assets
 
       - name: List assets
-        run: |
-          ls -R ./release-assets
+        run: ls -R ./release-assets
 
       - name: Create/Update Release and upload assets
         uses: softprops/action-gh-release@v2
