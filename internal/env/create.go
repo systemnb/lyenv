@@ -244,17 +244,11 @@ func CmdActivate(shellOpt string) error {
 
 	case "powershell", "pwsh":
 		// PowerShell snippet. User runs: lyenv activate | Invoke-Expression
-		// Use semicolon-separated PATH on Windows.
-		// Escape backslashes by using %q quoting.
-		// Also set a prompt marker variable; altering prompt function is optional, keep minimal.
 		fmt.Printf("$env:LYENV_HOME = %q\n", cwd)
 		fmt.Printf("$env:PATH = %q + \";\" + $env:PATH\n", bin)
 		fmt.Println(`$env:LYENV_ACTIVE = "1"`)
-		// Optional prompt decoration (safe and reversible):
-		fmt.Println(`if (-not $env:LYENV_PROMPT_APPLIED) {`)
-		fmt.Println(`  $env:LYENV_PROMPT_APPLIED = "1"`)
-		fmt.Println(`  # Note: Prompt override is optional; keeping minimal to avoid breaking custom prompts.`)
-		fmt.Println(`}`)
+		// IMPORTANT: must be single-line to work with pipeline + Invoke-Expression
+		fmt.Println(`if (-not $env:LYENV_PROMPT_APPLIED) { $env:LYENV_PROMPT_APPLIED = "1" }`)
 		return nil
 
 	case "cmd":
