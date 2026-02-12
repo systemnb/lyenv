@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -38,7 +37,7 @@ func fetchURL(url, outPath, proxy string) error {
 		args := []string{"-O", outPath, url}
 		cmd = exec.Command("wget", args...)
 	} else {
-		return fmt.Errorf("no downloader found (curl/wget)")
+		httpDownload(url, outPath, proxy)
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
