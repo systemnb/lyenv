@@ -1,6 +1,10 @@
 # lyenv —— 基于目录的隔离环境管理器  
 **支持可视化工作流 GUI**
 
+> This README is provided in [English](README.md) and [中文](README_zh.md) (Chinese).  
+> 语言切换：下方包含 [English](README.md) 和 [中文](README_zh.md)，内容一致。  
+> License: See `LICENSE` at the repository root.
+
 ---
 
 ## 1. lyenv 是什么？
