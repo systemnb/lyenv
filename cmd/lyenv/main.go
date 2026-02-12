@@ -74,14 +74,29 @@ func main() {
 		fmt.Println("Environment initialized successfully.")
 
 	case "activate":
-		if len(args) != 1 {
-			fmt.Fprintln(os.Stderr, "Error: activate takes no arguments")
-			os.Exit(2)
+		// Allow: lyenv activate
+		// Allow: lyenv activate --shell=bash|zsh|powershell|pwsh|cmd
+		shellOpt := ""
+		if len(args) > 1 {
+			flags := config.ParseFlags(args[1:])
+			shellOpt = strings.TrimSpace(flags["shell"])
+	
+			// If there are non-flag extra args, treat as error.
+			// config.ParseFlags only parses --k=v style, so any positional would be ignored;
+			// we can detect by checking args that don't start with "--".
+			for _, a := range args[1:] {
+				if !strings.HasPrefix(a, "--") {
+					fmt.Fprintln(os.Stderr, "Error: activate only accepts optional --shell=<bash|zsh|powershell|pwsh|cmd>")
+					os.Exit(2)
+				}
+			}
 		}
-		if err := env.CmdActivate(); err != nil {
+	
+		if err := env.CmdActivate(shellOpt); err != nil {
 			fmt.Fprintf(os.Stderr, "Activate failed: %v\n", err)
 			os.Exit(1)
 		}
+	
 
 	case "config":
 		if len(args) < 2 {

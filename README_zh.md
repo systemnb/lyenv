@@ -112,6 +112,12 @@ lyenv create ./demo
 lyenv init ./demo
 cd demo
 eval "$(lyenv activate)"
+
+#Windows PowerShell
+#lyenv activate | Invoke-Expression
+
+#Windows CMD
+#for /f "delims=" %i in ('lyenv activate --shell=cmd') do %i
 ```
 
 ---

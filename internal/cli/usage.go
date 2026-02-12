@@ -11,7 +11,11 @@ func Usage() {
 Usage:
   lyenv create <DIR>                 Create a new lyenv environment directory with default config and structure
   lyenv init <DIR>                   Verify and repair an existing lyenv environment (idempotent)
-  lyenv activate                     Print shell snippet to activate the current lyenv (bash/zsh); eval "$(lyenv activate)"
+  lyenv activate [--shell=bash|zsh|powershell|pwsh|cmd]
+                                    Print a shell snippet to activate the current lyenv.
+                                    Linux/macOS (bash/zsh): eval "$(lyenv activate)"
+                                    Windows PowerShell:     lyenv activate | Invoke-Expression
+                                    Windows CMD:           for /f "delims=" \%i in ('lyenv activate --shell=cmd') do %i
 
   lyenv config set <KEY> <VALUE> [--type=string|int|float|bool|json]
                                      Set a configuration value (dot path) with optional type enforcement

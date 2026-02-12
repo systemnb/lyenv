@@ -6,6 +6,8 @@ import (
 	"lyenv/internal/version"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 )
 
@@ -200,27 +202,73 @@ func EnsureInitializedAt(statePath string) error {
 }
 
 // cmdActivate prints a snippet to activate the lyenv environment.
-func CmdActivate() error {
-	// Use current working directory as LYENV_HOME
+//
+// Usage examples:
+//   - bash/zsh (Linux/macOS): eval "$(lyenv activate)"
+//   - PowerShell (Windows):  lyenv activate | Invoke-Expression
+//   - CMD (Windows):         for /f "delims=" %i in ('lyenv activate --shell=cmd') do %i
+func CmdActivate(shellOpt string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current working directory: %w", err)
 	}
 	bin := filepath.Join(cwd, "bin")
 
-	// Print shell snippet (bash/zsh compatible). User should: eval "$(lyenv activate)"
-	// NOTE: PS1 may be undefined in non-interactive shells; guard it to avoid 'unbound variable' with 'set -u'.
-	fmt.Printf("export LYENV_HOME=%q\n", cwd)
-	fmt.Printf("export PATH=%q:$PATH\n", bin)
-	fmt.Println(`export LYENV_ACTIVE=1`)
-	fmt.Println(`if [ -z "${LYENV_PROMPT_APPLIED+x}" ]; then`)
-	fmt.Println(`  export LYENV_PROMPT_APPLIED=1`)
-	fmt.Println(`  # Only modify PS1 if it is defined (handles 'set -u' non-interactive shells).`)
-	fmt.Println(`  if [ -n "${PS1+x}" ]; then`)
-	fmt.Println(`    export PS1="(lyenv) ${PS1}"`)
-	fmt.Println(`  fi`)
-	fmt.Println(`fi`)
-	return nil
+	// Normalize shell option
+	sh := strings.ToLower(strings.TrimSpace(shellOpt))
+
+	// Auto-detect if not provided
+	if sh == "" {
+		if runtime.GOOS == "windows" {
+			sh = "powershell"
+		} else {
+			sh = "bash"
+		}
+	}
+
+	switch sh {
+	case "bash", "zsh", "sh":
+		// Bash/Zsh snippet. User runs: eval "$(lyenv activate)"
+		// NOTE: PS1 may be undefined in non-interactive shells; guard it to avoid 'unbound variable' with 'set -u'.
+		fmt.Printf("export LYENV_HOME=%q\n", cwd)
+		fmt.Printf("export PATH=%q:$PATH\n", bin)
+		fmt.Println(`export LYENV_ACTIVE=1`)
+		fmt.Println(`if [ -z "${LYENV_PROMPT_APPLIED+x}" ]; then`)
+		fmt.Println(`  export LYENV_PROMPT_APPLIED=1`)
+		fmt.Println(`  # Only modify PS1 if it is defined (handles 'set -u' non-interactive shells).`)
+		fmt.Println(`  if [ -n "${PS1+x}" ]; then`)
+		fmt.Println(`    export PS1="(lyenv) ${PS1}"`)
+		fmt.Println(`  fi`)
+		fmt.Println(`fi`)
+		return nil
+
+	case "powershell", "pwsh":
+		// PowerShell snippet. User runs: lyenv activate | Invoke-Expression
+		// Use semicolon-separated PATH on Windows.
+		// Escape backslashes by using %q quoting.
+		// Also set a prompt marker variable; altering prompt function is optional, keep minimal.
+		fmt.Printf("$env:LYENV_HOME = %q\n", cwd)
+		fmt.Printf("$env:PATH = %q + \";\" + $env:PATH\n", bin)
+		fmt.Println(`$env:LYENV_ACTIVE = "1"`)
+		// Optional prompt decoration (safe and reversible):
+		fmt.Println(`if (-not $env:LYENV_PROMPT_APPLIED) {`)
+		fmt.Println(`  $env:LYENV_PROMPT_APPLIED = "1"`)
+		fmt.Println(`  # Note: Prompt override is optional; keeping minimal to avoid breaking custom prompts.`)
+		fmt.Println(`}`)
+		return nil
+
+	case "cmd":
+		// CMD snippet. User runs:
+		//   for /f "delims=" %i in ('lyenv activate --shell=cmd') do %i
+		// Use %%PATH%% inside printed script because CMD expands % at execution time.
+		fmt.Printf("set LYENV_HOME=%s\n", cwd)
+		fmt.Printf("set PATH=%s;%%PATH%%\n", bin)
+		fmt.Println("set LYENV_ACTIVE=1")
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported shell: %s (use --shell=bash|zsh|powershell|pwsh|cmd)", sh)
+	}
 }
 
 // isLyenvDir checks if the directory already looks like a lyenv environment.
