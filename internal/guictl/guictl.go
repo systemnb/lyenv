@@ -52,9 +52,7 @@ func StartGlobal(addr string) error {
 	cmd.Stdout = lf
 	cmd.Stderr = lf
 
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	}
+	applyDetach(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start gui process: %w", err)
