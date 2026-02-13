@@ -66,7 +66,7 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "--version":
+	case "version":
 		fmt.Printf("lyenv %s (commit %s, built %s)\n", version.Version, version.Commit, version.BuildTime)
 		return
 
