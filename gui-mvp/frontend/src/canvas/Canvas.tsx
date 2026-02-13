@@ -54,7 +54,7 @@ export type CanvasHandle = {
   exportFlowAsJSON: () => void
   importLyenvByPicker: () => void
   exportLyenvAsZip: () => void
-  getGraph: () => {nodes: any[], edges: any[]}
+  getGraph: () => { nodes: any[], edges: any[] }
 }
 
 type RFNodeType = RFNode
@@ -136,7 +136,7 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
 
   // file pickers
   const fileJsonRef = useRef<HTMLInputElement | null>(null)
-  const fileZipRef  = useRef<HTMLInputElement | null>(null)
+  const fileZipRef = useRef<HTMLInputElement | null>(null)
 
   // settings
   const [settings, setSettings] = useState<Settings>({
@@ -152,16 +152,16 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   const [palette, setPalette] = useState<PaletteItem[]>([])
   useEffect(() => {
     let mounted = true
-    ;(async () => {
-      try {
-        const resp = await fetch('/common-modules.json', { cache: 'no-store' })
-        if (!resp.ok) throw new Error()
-        const arr = await resp.json()
-        if (mounted) setPalette(Array.isArray(arr) ? arr : [])
-      } catch {
-        setPalette([])
-      }
-    })()
+      ; (async () => {
+        try {
+          const resp = await fetch('/common-modules.json', { cache: 'no-store' })
+          if (!resp.ok) throw new Error()
+          const arr = await resp.json()
+          if (mounted) setPalette(Array.isArray(arr) ? arr : [])
+        } catch {
+          setPalette([])
+        }
+      })()
     return () => { mounted = false }
   }, [])
 
@@ -265,7 +265,7 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
     if (createSpecialNode(item.key, pos)) return
 
     const id = `N_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-    const toPorts = (list: { name: string; dtype?: string }[] | undefined, prefix: 'in'|'out') =>
+    const toPorts = (list: { name: string; dtype?: string }[] | undefined, prefix: 'in' | 'out') =>
       (list || []).map((p, i) => ({ id: `${prefix}-${id}-${i}`, name: p.name || `${prefix}${i}`, dtype: p.dtype || 'any' }))
 
     let data: RFNodeData
@@ -383,11 +383,18 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
 
   /** export/import flow json */
   const exportFlowAsJSON = useCallback(() => {
-    const json = { nodes: rf.getNodes(), edges: rf.getEdges() }
-    const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob); a.download = 'flow.json'; a.click()
-    URL.revokeObjectURL(a.href)
+    try {
+      const name = prompt('Flow name:', 'flow') || 'flow'
+      const json = { nodes: rf.getNodes(), edges: rf.getEdges() }
+      const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob); a.download = `${name}.json`; a.click()
+      URL.revokeObjectURL(a.href)
+      message.success('Exportd flow')
+    } catch (err: any) {
+      console.error(err)
+      message.error(err?.message || 'Export failed')
+    }
   }, [rf])
 
   const importFlowFromFile = useCallback(async (file: File) => {
@@ -433,12 +440,16 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   })
 
   const paneMenu: MenuNode[] = useMemo(() => ([
-    { key: 'add-here', label: 'Add node here', action: () => {
-      const pos = contextMenuFlowPosRef.current ?? pointerFlowPosRef.current ?? screenToFlow(window.innerWidth/2, window.innerHeight/2)
-      // default add a generic node
-      createNodeFromTemplate({ ...SPECIALS[0], key:'__generic__', label:'Node', color: settings.nodeDefaultColor,
-        template: { kind:'code', language:'python', source:'', ports:{ inputs:[{name:'in'}], outputs:[{name:'out'}] } } } as any, pos)
-    }},
+    {
+      key: 'add-here', label: 'Add node here', action: () => {
+        const pos = contextMenuFlowPosRef.current ?? pointerFlowPosRef.current ?? screenToFlow(window.innerWidth / 2, window.innerHeight / 2)
+        // default add a generic node
+        createNodeFromTemplate({
+          ...SPECIALS[0], key: '__generic__', label: 'Node', color: settings.nodeDefaultColor,
+          template: { kind: 'code', language: 'python', source: '', ports: { inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] } }
+        } as any, pos)
+      }
+    },
     { key: 'group', label: 'Group (Ctrl/Cmd+G)', action: () => { groupSelection(); requestAnimationFrame(() => commitSnapshotState(rf.getNodes() as any, rf.getEdges() as any)) } },
     { key: 'ungroup', label: 'Ungroup (Ctrl/Cmd+Shift+G)', action: () => { ungroupSelection(); requestAnimationFrame(() => commitSnapshotState(rf.getNodes() as any, rf.getEdges() as any)) } },
     { key: 'export-lyenv', label: 'Export LyEnv (.zip)', action: () => exportLyenvAsZip() },
@@ -447,9 +458,9 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   ]), [createNodeFromTemplate, settings.nodeDefaultColor, groupSelection, ungroupSelection, commitSnapshotState, rf, exportLyenvAsZip, exportFlowAsJSON])
 
   const nodeMenu: MenuNode[] = useMemo(() => ([
-    { key:'edit', label:'Edit…', action: () => { setEditorNodeId(menu.nodeId!); setEditorOpen(true) } },
-    { key:'edit-data', label:'Edit Data…', action: () => { setDataEditorNodeId(menu.nodeId!); setDataEditorOpen(true) } },
-    { key:'delete', label:'Delete', action: () => deleteSelection() },
+    { key: 'edit', label: 'Edit…', action: () => { setEditorNodeId(menu.nodeId!); setEditorOpen(true) } },
+    { key: 'edit-data', label: 'Edit Data…', action: () => { setDataEditorNodeId(menu.nodeId!); setDataEditorOpen(true) } },
+    { key: 'delete', label: 'Delete', action: () => deleteSelection() },
   ]), [menu.nodeId, deleteSelection])
 
   // Group node UI
@@ -479,10 +490,12 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   // Expose methods
   useImperativeHandle(ref, () => ({
     addNodeAtCenter: () => {
-      const pos = pointerFlowPosRef.current ?? screenToFlow(window.innerWidth/2, window.innerHeight/2)
+      const pos = pointerFlowPosRef.current ?? screenToFlow(window.innerWidth / 2, window.innerHeight / 2)
       // create a generic node
-      createNodeFromTemplate({ ...SPECIALS[0], key:'__generic__', label:'Node', color: settings.nodeDefaultColor,
-        template: { kind:'code', language:'python', source:'', ports:{ inputs:[{name:'in'}], outputs:[{name:'out'}] } } } as any, pos)
+      createNodeFromTemplate({
+        ...SPECIALS[0], key: '__generic__', label: 'Node', color: settings.nodeDefaultColor,
+        template: { kind: 'code', language: 'python', source: '', ports: { inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] } }
+      } as any, pos)
     },
     autoLayout,
     saveToLocal,
@@ -500,14 +513,14 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   }))
 
   return (
-    <div style={{ height: '100%', width: '100%', display:'flex', flex: 1, minHeight: 0 }}>
+    <div style={{ height: '100%', width: '100%', display: 'flex', flex: 1, minHeight: 0 }}>
       <Sidebar
         palette={[...SPECIALS, ...palette]}
         groups={(rf.getNodes() as RFNodeType[])
-          .filter(n=>n.type==='group')
-          .map(g=>({ id:g.id, name:(g.data as any)?.label || '', count:(rf.getNodes() as RFNodeType[]).filter(n => (n as any).parentId === g.id).length }))}
-        onFocusGroup={() => {}}
-        onExportGroup={() => {}}
+          .filter(n => n.type === 'group')
+          .map(g => ({ id: g.id, name: (g.data as any)?.label || '', count: (rf.getNodes() as RFNodeType[]).filter(n => (n as any).parentId === g.id).length }))}
+        onFocusGroup={() => { }}
+        onExportGroup={() => { }}
         onUndo={undo}
         onRedo={redo}
         onSave={saveToLocal}
@@ -516,13 +529,13 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
         onCreateFromPalette={(key: PaletteKey) => {
           const item = [...SPECIALS, ...palette].find(p => p.key === key)
           if (!item) return
-          const pos = pointerFlowPosRef.current ?? screenToFlow(window.innerWidth/2, window.innerHeight/2)
+          const pos = pointerFlowPosRef.current ?? screenToFlow(window.innerWidth / 2, window.innerHeight / 2)
           createNodeFromTemplate(item, pos)
         }}
       />
 
       <div
-        style={{ flex:1, minWidth:0, height:'100%', background: settings.canvasBg }}
+        style={{ flex: 1, minWidth: 0, height: '100%', background: settings.canvasBg }}
         onMouseMove={(ev) => {
           const pane = document.querySelector('.react-flow__pane') as HTMLElement | null
           const rect = pane?.getBoundingClientRect()
@@ -540,14 +553,14 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
             if (!raw) return
             const item = JSON.parse(raw) as PaletteItem
             createNodeFromTemplate(item, screenToFlow(ev.clientX, ev.clientY))
-          } catch {}
+          } catch { }
         }}
       >
         <input
           ref={fileJsonRef}
           type="file"
           accept=".json,application/json"
-          style={{ display:'none' }}
+          style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0]
             if (f) importFlowFromFile(f)
@@ -558,8 +571,8 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
           ref={fileZipRef}
           type="file"
           accept=".zip,application/zip,application/x-zip-compressed"
-          style={{ display:'none' }}
-          onChange={() => {}}
+          style={{ display: 'none' }}
+          onChange={() => { }}
         />
 
         <ReactFlow
@@ -577,8 +590,10 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
             const e = event as unknown as MouseEvent
             if ((e as any).detail === 2) {
               const pos = screenToFlow(e.clientX, e.clientY)
-              createNodeFromTemplate({ ...SPECIALS[0], key:'__generic__', label:'Node', color: settings.nodeDefaultColor,
-                template: { kind:'code', language:'python', source:'', ports:{ inputs:[{name:'in'}], outputs:[{name:'out'}] } } } as any, pos)
+              createNodeFromTemplate({
+                ...SPECIALS[0], key: '__generic__', label: 'Node', color: settings.nodeDefaultColor,
+                template: { kind: 'code', language: 'python', source: '', ports: { inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] } }
+              } as any, pos)
             }
           }}
           onPaneContextMenu={(event) => {
@@ -611,7 +626,7 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
           y={menu.y}
           items={menu.type === 'pane' ? paneMenu : nodeMenu}
           onClose={() => {
-            setMenu(m => ({ ...m, visible:false }))
+            setMenu(m => ({ ...m, visible: false }))
             contextMenuFlowPosRef.current = null
           }}
         />
@@ -645,28 +660,28 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
       </div>
 
       <Drawer title="Canvas Settings" placement="right" width={320} open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <div style={{ fontWeight:600, marginBottom:6 }}>Canvas background</div>
-            <input type="color" value={settings.canvasBg} onChange={(e)=> setSettings(s => ({ ...s, canvasBg: e.target.value }))} />
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Canvas background</div>
+            <input type="color" value={settings.canvasBg} onChange={(e) => setSettings(s => ({ ...s, canvasBg: e.target.value }))} />
           </div>
           <Divider />
           <div>
-            <div style={{ fontWeight:600, marginBottom:6 }}>Grid</div>
-            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Grid</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <Select
                 value={settings.gridVariant}
-                onChange={(v)=> setSettings(s => ({ ...s, gridVariant: v }))}
-                options={[{value:'dots',label:'Dots'},{value:'lines',label:'Lines'}]}
+                onChange={(v) => setSettings(s => ({ ...s, gridVariant: v }))}
+                options={[{ value: 'dots', label: 'Dots' }, { value: 'lines', label: 'Lines' }]}
                 style={{ width: 120 }}
               />
-              <input type="color" value={settings.gridColor} onChange={(e)=> setSettings(s => ({ ...s, gridColor: e.target.value }))} />
+              <input type="color" value={settings.gridColor} onChange={(e) => setSettings(s => ({ ...s, gridColor: e.target.value }))} />
             </div>
           </div>
           <Divider />
           <div>
-            <div style={{ fontWeight:600, marginBottom:6 }}>Auto save</div>
-            <Switch checked={settings.autoSave} onChange={(v)=> setSettings(s => ({ ...s, autoSave: v }))} />
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Auto save</div>
+            <Switch checked={settings.autoSave} onChange={(v) => setSettings(s => ({ ...s, autoSave: v }))} />
           </div>
         </div>
       </Drawer>

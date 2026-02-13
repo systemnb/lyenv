@@ -79,37 +79,93 @@ function buildAdj(edges: RFEdge[], scope: Set<string>) {
 }
 
 /**
- * Extract a linear control order defined by Start -> ... -> End.
- * Requirements:
- * - Start and End exist in scope.
- * - Each node on the control path (except End) has exactly 1 outgoing edge within scope.
- * - End has 0 outgoing edges within scope.
+ * Extract a deterministic execution order using topological sorting (DAG).
+ * This enables fan-out / fan-in wiring without requiring "exactly 1 outgoing edge".
+ *
+ * Rules:
+ * - Graph must be acyclic within the scope
+ * - Start will be placed first, End will be placed last
+ * - For determinism, nodes with the same indegree are ordered by (position.y, position.x, id)
  */
-function extractLinearOrder(nodes: RFNode[], edges: RFEdge[], scope: Set<string>): string[] {
+function extractTopoOrder(nodes: RFNode[], edges: RFEdge[], scope: Set<string>): string[] {
   const { start, end } = findStartEnd(nodes, scope)
   if (!start || !end) throw new Error('Export requires Start and End nodes inside the group.')
 
-  const { out } = buildAdj(edges, scope)
-  const visited = new Set<string>()
-  const order: string[] = []
+  const inScope = nodes.filter(n => scope.has(n.id))
+  const ids = inScope.map(n => n.id)
 
-  let cur = start.id
-  while (true) {
-    if (visited.has(cur)) throw new Error('Cycle detected in Start->End path.')
-    visited.add(cur)
-    order.push(cur)
-    if (cur === end.id) break
+  const nodeById = new Map(inScope.map(n => [n.id, n] as const))
 
-    const outs = out.get(cur) || []
-    if (outs.length !== 1) {
-      throw new Error(
-        `Control node ${cur} must have exactly 1 outgoing edge in Start->End order (found ${outs.length}).`
-      )
-    }
-    cur = outs[0].target as string
+  // adjacency + indegree
+  const out = new Map<string, Set<string>>()
+  const indeg = new Map<string, number>()
+  for (const id of ids) {
+    out.set(id, new Set())
+    indeg.set(id, 0)
   }
-  return order
+
+  for (const e of edges) {
+    if (!e.source || !e.target) continue
+    if (!scope.has(e.source) || !scope.has(e.target)) continue
+    if (e.source === e.target) continue
+    // De-dup parallel edges
+    const s = e.source
+    const t = e.target
+    const set = out.get(s)!
+    if (!set.has(t)) {
+      set.add(t)
+      indeg.set(t, (indeg.get(t) || 0) + 1)
+    }
+  }
+
+  const sortKey = (id: string) => {
+    const n = nodeById.get(id)
+    const x = (n as any)?.position?.x ?? 0
+    const y = (n as any)?.position?.y ?? 0
+    return { y, x, id }
+  }
+
+  const cmp = (a: string, b: string) => {
+    if (a === start.id) return -1
+    if (b === start.id) return 1
+    const ka = sortKey(a), kb = sortKey(b)
+    if (ka.y !== kb.y) return ka.y - kb.y
+    if (ka.x !== kb.x) return ka.x - kb.x
+    return ka.id.localeCompare(kb.id)
+  }
+
+  // init queue (indegree 0)
+  const queue: string[] = []
+  for (const [id, d] of indeg.entries()) {
+    if (d === 0) queue.push(id)
+  }
+  queue.sort(cmp)
+
+  // Kahn
+  const order: string[] = []
+  while (queue.length) {
+    const cur = queue.shift()!
+    order.push(cur)
+
+    for (const nxt of out.get(cur) || []) {
+      indeg.set(nxt, (indeg.get(nxt) || 0) - 1)
+      if (indeg.get(nxt) === 0) {
+        queue.push(nxt)
+        queue.sort(cmp)
+      }
+    }
+  }
+
+  // cycle detection
+  if (order.length !== ids.length) {
+    throw new Error('Cycle detected in workflow graph. Export requires an acyclic workflow (DAG).')
+  }
+
+  // Force Start first / End last (keep relative order for others)
+  const withoutStartEnd = order.filter(x => x !== start.id && x !== end.id)
+  return [start.id, ...withoutStartEnd, end.id]
 }
+
 
 /**
  * Build wiring map: dstNodeId -> dstInputPortName -> { node: srcNodeId, port: srcOutputPortName }
@@ -361,7 +417,7 @@ function makeStartRunnerPy(startId: string, outPorts: string[]): string {
   const outJson = JSON.stringify(outPorts)
   return `# -*- coding: utf-8 -*-
 # start_runner.py - stdio runner for Start node (CLI args -> config)
-from lyenv_sdk import read_request, respond_ok, respond_error
+from lyenv_sdk import read_request, respond_ok, respond_error, log
 from flow_sdk import write_outputs
 
 START_ID = ${JSON.stringify(startId)}
@@ -373,6 +429,8 @@ def main():
         args = [str(x) for x in (req.get("args") or [])]
         write_outputs(START_ID, OUT_PORTS, args)
         # keep empty message to reduce console noise
+        log({ "start_args": args })
+        log({ "start_outputs": dict(zip(OUT_PORTS, args)) })
         respond_ok("")
     except Exception as e:
         respond_error(str(e))
@@ -425,7 +483,8 @@ function makeNodeRunnerPy(
 # runner_${sanitize(nodeId)}.py - stdio runner for node "${label}"
 import subprocess
 import sys
-from typing import List
+import json
+from typing import List, Any
 from lyenv_sdk import read_request, log, respond_ok, respond_error
 from flow_sdk import load_wiring, build_inputs, write_outputs
 
@@ -435,11 +494,42 @@ OUTPUT_PORTS = ${JSON.stringify(outputPorts)}
 PROGRAM = ${isPython ? "sys.executable" : JSON.stringify(program)}
 FIXED_ARGS = ${JSON.stringify(fixedArgs)}
 
-def split_outputs(s: str, out_count: int) -> List[str]:
-    s = (s or "").strip()
-    if out_count <= 1:
+def _as_text(x: Any) -> str:
+    return "" if x is None else str(x)
+
+def _parse_outputs(stdout_text: str, out_count: int) -> List[str]:
+    """
+    Output parsing strategy:
+    1) If stdout is JSON array: ["a","b",...], map by index
+    2) Else if out_count == 1: return raw text
+    3) Else fallback: split() tokens (last resort)
+    """
+    s = (stdout_text or "").strip()
+    if out_count <= 0:
+        return []
+    if s == "":
+        return [""] * out_count
+
+    # Try JSON array first (recommended for multi-output)
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, list):
+            arr = [ _as_text(v) for v in obj ]
+            # pad / trim
+            if len(arr) < out_count:
+                arr = arr + [""] * (out_count - len(arr))
+            return arr[:out_count]
+    except Exception:
+        pass
+
+    if out_count == 1:
         return [s]
-    return s.split()
+
+    # fallback split (unsafe if values contain spaces)
+    parts = s.split()
+    if len(parts) < out_count:
+        parts = parts + [""] * (out_count - len(parts))
+    return parts[:out_count]
 
 def main():
     try:
@@ -447,7 +537,15 @@ def main():
         wiring = load_wiring("./scripts/flow_wiring.json")
         argv = build_inputs(req, wiring, NODE_ID, INPUT_PORTS)
 
+        # Debug: log resolved inputs for this node
+        try:
+            log({ "node": NODE_ID, "inputs": dict(zip(INPUT_PORTS, argv)) })
+        except Exception:
+            log("node inputs: " + str(argv))
+
         cmd = [PROGRAM] + list(FIXED_ARGS) + argv
+        log({ "node": NODE_ID, "cmd": cmd })
+
         try:
             p = subprocess.run(cmd, capture_output=True, text=True)
         except Exception as e:
@@ -455,7 +553,11 @@ def main():
             return
 
         if p.stderr:
-            log(p.stderr.strip())
+            # keep stderr in logs for debugging (truncate)
+            s = p.stderr.strip()
+            if len(s) > 2000:
+                s = s[:2000] + "...(truncated)"
+            log({ "node": NODE_ID, "stderr": s })
 
         if p.returncode != 0:
             msg = (p.stderr or "").strip()
@@ -464,9 +566,15 @@ def main():
             respond_error(f"node failed: {NODE_ID}: rc={p.returncode} {msg}")
             return
 
-        outs = split_outputs(p.stdout, len(OUTPUT_PORTS))
+        outs = _parse_outputs(p.stdout, len(OUTPUT_PORTS))
         write_outputs(NODE_ID, OUTPUT_PORTS, outs)
-        # keep empty message to reduce console noise
+
+        # Debug: log node outputs
+        try:
+            log({ "node": NODE_ID, "outputs": dict(zip(OUTPUT_PORTS, outs)) })
+        except Exception:
+            log("node outputs: " + str(outs))
+
         respond_ok("")
     except Exception as e:
         respond_error(str(e))
@@ -475,6 +583,7 @@ if __name__ == "__main__":
     main()
 `
 }
+
 
 // -------------------------
 // Export main
@@ -535,7 +644,7 @@ export async function buildManifestAndFilesStdio(
   }
 
   for (const s of scopes) {
-    const order = extractLinearOrder(allNodes, allEdges, s.scope)
+    const order = extractTopoOrder(allNodes, allEdges, s.scope)
     const wiring = buildWiring(allNodes, allEdges, s.scope)
 
     // One wiring file per command scope (same path; overwritten each loop)
