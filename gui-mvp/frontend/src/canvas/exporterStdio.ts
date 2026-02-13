@@ -122,17 +122,25 @@ function extractTopoOrder(nodes: RFNode[], edges: RFEdge[], scope: Set<string>):
     const n = nodeById.get(id)
     const x = (n as any)?.position?.x ?? 0
     const y = (n as any)?.position?.y ?? 0
-    return { y, x, id }
+    return { x, y, id }
   }
-
+  
   const cmp = (a: string, b: string) => {
+    // Keep Start earliest whenever possible
     if (a === start.id) return -1
     if (b === start.id) return 1
+  
     const ka = sortKey(a), kb = sortKey(b)
-    if (ka.y !== kb.y) return ka.y - kb.y
+  
+    // Left-to-right first
     if (ka.x !== kb.x) return ka.x - kb.x
+    // Then top-to-bottom
+    if (ka.y !== kb.y) return ka.y - kb.y
+  
+    // Stable tie-breaker
     return ka.id.localeCompare(kb.id)
   }
+  
 
   // init queue (indegree 0)
   const queue: string[] = []
