@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -527,6 +528,70 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		}
 	}
 
+	// --- Windows fallback: if shebang not detected/usable, run by extension ---
+	// On Windows, shebang is not a reliable execution mechanism.
+	// If entry is a script file, wrap it with an interpreter from PATH.
+	if runtime.GOOS == "windows" && !useInterpreter {
+		low := strings.ToLower(entry)
+
+		switch {
+		case strings.HasSuffix(low, ".py"):
+			// Prefer python3, fallback python.
+			if p, e := exec.LookPath("python3"); e == nil {
+				interp = p
+			} else if p, e := exec.LookPath("python"); e == nil {
+				interp = p
+			} else {
+				writeLogLine(w, map[string]interface{}{
+					"level":   "error",
+					"message": "python not found in PATH (required for .py stdio scripts on Windows)",
+					"entry":   entry,
+				})
+				return map[string]interface{}{
+					"status":  "error",
+					"message": "python not found in PATH (required for .py stdio scripts on Windows)",
+				}, 1
+			}
+			useInterpreter = true
+			scriptAbs = entry
+
+		case strings.HasSuffix(low, ".js"):
+			if p, e := exec.LookPath("node"); e == nil {
+				interp = p
+				useInterpreter = true
+				scriptAbs = entry
+			} else {
+				writeLogLine(w, map[string]interface{}{
+					"level":   "error",
+					"message": "node not found in PATH (required for .js stdio scripts on Windows)",
+					"entry":   entry,
+				})
+				return map[string]interface{}{
+					"status":  "error",
+					"message": "node not found in PATH (required for .js stdio scripts on Windows)",
+				}, 1
+			}
+
+		case strings.HasSuffix(low, ".sh"):
+			// Optional: if user has Git-Bash/WSL bash in PATH.
+			if p, e := exec.LookPath("bash"); e == nil {
+				interp = p
+				useInterpreter = true
+				scriptAbs = entry
+			} else {
+				writeLogLine(w, map[string]interface{}{
+					"level":   "error",
+					"message": "bash not found in PATH (required for .sh scripts on Windows)",
+					"entry":   entry,
+				})
+				return map[string]interface{}{
+					"status":  "error",
+					"message": "bash not found in PATH (required for .sh scripts on Windows)",
+				}, 1
+			}
+		}
+	}
+
 	// If no interpreter was resolved from shebang, pick one by file extension.
 	// This keeps stdio scripts runnable even without a shebang line.
 	if !useInterpreter {
@@ -791,4 +856,51 @@ func copyFile(src, dst string) error {
 
 	_, err = io.Copy(out, in)
 	return err
+}
+
+func normalizeProgramForOS(spec *CommandSpec) (string, []string, error) {
+	prog := spec.Program
+	args := append([]string{}, spec.Args...)
+
+	// Only apply on Windows. Unix can execute shebang scripts directly.
+	if runtime.GOOS != "windows" {
+		return prog, args, nil
+	}
+
+	low := strings.ToLower(strings.TrimSpace(prog))
+
+	// If program is plugin-relative like ./scripts/a.py, keep it as-is, exec.Command can handle it
+	// but Windows can't execute .py directly, so we wrap it with python.
+	switch {
+	case strings.HasSuffix(low, ".py"):
+		// Prefer python3, fallback python.
+		py := ""
+		if p, err := exec.LookPath("python3"); err == nil {
+			py = p
+		} else if p, err := exec.LookPath("python"); err == nil {
+			py = p
+		} else {
+			return "", nil, errors.New("python not found in PATH (required to run .py stdio scripts on Windows)")
+		}
+		// python <script> <args...>
+		return py, append([]string{prog}, args...), nil
+
+	case strings.HasSuffix(low, ".js"):
+		node, err := exec.LookPath("node")
+		if err != nil {
+			return "", nil, errors.New("node not found in PATH (required to run .js stdio scripts on Windows)")
+		}
+		return node, append([]string{prog}, args...), nil
+
+	case strings.HasSuffix(low, ".sh"):
+		// If user has Git-Bash or WSL bash in PATH, allow it.
+		bash, err := exec.LookPath("bash")
+		if err != nil {
+			return "", nil, errors.New("bash not found in PATH (required to run .sh scripts on Windows)")
+		}
+		return bash, append([]string{prog}, args...), nil
+	}
+
+	// For exe/cmd/ps1, do nothing
+	return prog, args, nil
 }
