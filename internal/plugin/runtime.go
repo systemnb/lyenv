@@ -475,6 +475,35 @@ func trimForLog(s string, max int) string {
 	return s[:max] + "...(truncated)"
 }
 
+func isWindowsAppsStub(p string) bool {
+	low := strings.ToLower(p)
+	// Typical Windows Store alias location:
+	// C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\python.exe
+	return strings.Contains(low, `\microsoft\windowsapps\`)
+}
+
+// findPythonOnWindows tries in this order:
+// 1) py launcher (best)
+// 2) python / python3, but reject WindowsApps stub
+func findPythonOnWindows() (prog string, extraArgs []string, ok bool) {
+	// 1) py launcher (recommended on Windows)
+	if p, err := exec.LookPath("py"); err == nil && !isWindowsAppsStub(p) {
+		// Use py -3 (Python 3) to run scripts
+		return p, []string{"-3"}, true
+	}
+
+	// 2) python / python3 (reject WindowsApps stub)
+	if p, err := exec.LookPath("python"); err == nil && !isWindowsAppsStub(p) {
+		return p, nil, true
+	}
+	if p, err := exec.LookPath("python3"); err == nil && !isWindowsAppsStub(p) {
+		return p, nil, true
+	}
+
+	return "", nil, false
+}
+
+
 // spawnStdio starts a stdio-capable program.
 // - Workdir resolution: prefer spec.Workdir (abs or plugin-relative), else <plugin>/scripts if exists, else <plugin>.
 // - Program resolution: abs => as-is; relative with path sep => join with <plugin>; bare name => check in workdir first.
@@ -505,14 +534,15 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 
 	// Resolve entry program.
 	prog := strings.TrimSpace(spec.Program)
+	prog = filepath.FromSlash(prog)
 	if prog == "" {
 		return map[string]interface{}{"status": "error", "message": "stdio executor requires 'program'"}, 1
-	}
+	} 
 
 	entry := prog
 	if filepath.IsAbs(prog) {
 		// use as-is
-	} else if strings.ContainsRune(prog, os.PathSeparator) {
+	} else if strings.Contains(prog, "\\") || strings.Contains(prog, "/") {
 		entry = filepath.Join(absPluginDir, prog)
 	} else {
 		// bare program name => prefer file in workdir if present
@@ -564,24 +594,32 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 
 		switch {
 		case strings.HasSuffix(low, ".py"):
-			// Prefer python3, fallback python.
-			if p, e := exec.LookPath("python3"); e == nil {
-				interp = p
-			} else if p, e := exec.LookPath("python"); e == nil {
-				interp = p
-			} else {
+			p, extra, ok := findPythonOnWindows()
+			if !ok {
 				writeLogLine(w, map[string]interface{}{
 					"level":   "error",
-					"message": "python not found in PATH (required for .py stdio scripts on Windows)",
+					"message": "python not found in PATH (or only WindowsApps stub). Install Python or disable App Execution Aliases.",
 					"entry":   entry,
 				})
 				return map[string]interface{}{
 					"status":  "error",
-					"message": "python not found in PATH (required for .py stdio scripts on Windows)",
+					"message": "python not found in PATH (or only WindowsApps stub). Install Python or disable App Execution Aliases.",
 				}, 1
 			}
+			interp = p
+			// IMPORTANT: if using "py", we must include extra args like "-3"
+			// We'll prepend them later when building cmd.
+			// Store them temporarily by injecting into spec.Args prefix (simplest local approach below).
+			// Better: use a local variable for interpreterExtraArgs.
 			useInterpreter = true
 			scriptAbs = entry
+		
+			// Store interpreter extra args into args prefix for this call:
+			// We'll pass: interp <extra...> <scriptAbs> <args...>
+			if len(extra) > 0 {
+				args = append(extra, args...)
+			}
+		
 
 		case strings.HasSuffix(low, ".js"):
 			if p, e := exec.LookPath("node"); e == nil {
@@ -666,7 +704,8 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		"level":   "debug",
 		"message": "spawn stdio",
 		"entry":   entry,
-		"args":    args,
+		"cmd":     cmd.Path,
+		"argv":    cmd.Args,
 		"workdir": cmd.Dir,
 	})
 
