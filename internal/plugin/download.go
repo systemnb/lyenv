@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"io"
+	"lyenv/internal/config"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,12 +13,35 @@ import (
 	"time"
 )
 
+func applyMirrorEnv(rawURL string) string {
+	envDir := strings.TrimSpace(os.Getenv("LYENV_HOME"))
+	if envDir == "" {
+		envDir = "." // fallback for non-activated env
+	}
+
+	prefix, err := config.ConfigGet(envDir, "lyenv.yaml", "config.network.mirror_prefix")
+	if err != nil {
+		return rawURL
+	}
+
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return rawURL
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if strings.HasPrefix(rawURL, prefix) {
+		return rawURL
+	}
+	return prefix + rawURL
+}
+
 // downloadToFile downloads rawURL into outPath.
 // Strategy: curl -> wget -> Go net/http fallback.
 // proxy: optional proxy URL, e.g. http://127.0.0.1:7890
 func downloadToFile(rawURL, outPath, proxy string) error {
 	_ = os.MkdirAll(filepath.Dir(outPath), 0o755)
-
 	// 1) curl
 	if _, err := exec.LookPath("curl"); err == nil {
 		args := []string{"-L", "-o", outPath, rawURL}

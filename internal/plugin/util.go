@@ -2,9 +2,26 @@ package plugin
 
 import (
 	"io/fs"
+	"lyenv/internal/config"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+func getMirrorPrefix(envDir string) string {
+	cfg, err := config.LoadYAML(filepath.Join(envDir, "lyenv.yaml"))
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimSpace(config.GetString(cfg, "config.network.mirror_prefix"))
+	if p == "" {
+		return ""
+	}
+	if !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	return p
+}
 
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info fs.FileInfo, err error) error {
@@ -25,5 +42,7 @@ func copyDir(src, dst string) error {
 }
 
 func fetchURL(url, outPath, proxy string) error {
+	// Apply mirror prefix from config (only for github urls if you want)
+	url = applyMirrorEnv(url)
 	return downloadToFile(url, outPath, proxy)
 }

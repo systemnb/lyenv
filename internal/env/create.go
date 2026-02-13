@@ -172,6 +172,9 @@ plugins:
 config:
   use_container: false
   pkg_manager: "auto"     # auto-detect package manager
+  network:
+    proxy_url: ""
+	mirror_prefix: ""
 `
 	if err := WriteFileIfNotExists(filepath.Join(absDir, "lyenv.yaml"), defaultCfg, 0o644); err != nil {
 		return fmt.Errorf("failed to write lyenv.yaml: %w", err)
