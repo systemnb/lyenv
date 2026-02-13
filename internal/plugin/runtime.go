@@ -447,6 +447,34 @@ func ctxTimeoutSeconds(ctx context.Context) int64 {
 	return int64(rem.Seconds())
 }
 
+func parseLastJSONObject(stdout string) (map[string]interface{}, error) {
+	s := strings.TrimSpace(stdout)
+	if s == "" {
+		return nil, fmt.Errorf("empty stdout (EOF)")
+	}
+
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		ln := strings.TrimSpace(lines[i])
+		if ln == "" {
+			continue
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(ln), &obj); err == nil {
+			return obj, nil
+		}
+	}
+	return nil, fmt.Errorf("no valid JSON object found in stdout")
+}
+
+func trimForLog(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
+}
+
 // spawnStdio starts a stdio-capable program.
 // - Workdir resolution: prefer spec.Workdir (abs or plugin-relative), else <plugin>/scripts if exists, else <plugin>.
 // - Program resolution: abs => as-is; relative with path sep => join with <plugin>; bare name => check in workdir first.
@@ -642,25 +670,63 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		"workdir": cmd.Dir,
 	})
 
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 
-	if err := cmd.Start(); err != nil {
-		writeLogLine(w, map[string]interface{}{"level": "error", "message": "start failed", "error": err.Error()})
-		return map[string]interface{}{"status": "error", "message": err.Error()}, exitCode(err)
-	}
-	enc := json.NewEncoder(stdin)
-	_ = enc.Encode(req)
-	_ = stdin.Close()
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
 
-	var resp map[string]interface{}
-	dec := json.NewDecoder(stdout)
-	if err := dec.Decode(&resp); err != nil {
-		writeLogLine(w, map[string]interface{}{"level": "error", "message": "resp decode failed", "error": err.Error()})
-		return map[string]interface{}{"status": "error", "message": err.Error()}, exitCode(err)
+	runErr := cmd.Run()
+
+	stdoutStr := outBuf.String()
+	stderrStr := errBuf.String()
+
+	// Always log stderr if non-empty (super important on Windows)
+	if strings.TrimSpace(stderrStr) != "" {
+		writeLogLine(w, map[string]interface{}{
+			"level":   "error",
+			"message": "stdio stderr",
+			"entry":   entry,
+			"stderr":  stderrStr,
+		})
 	}
-	err = cmd.Wait()
-	return resp, exitCode(err)
+
+	if runErr != nil {
+		// If process failed, surface error + stderr
+		writeLogLine(w, map[string]interface{}{
+			"level":   "error",
+			"message": "stdio process failed",
+			"entry":   entry,
+			"error":   runErr.Error(),
+			"stderr":  stderrStr,
+			"stdout":  trimForLog(stdoutStr, 2000),
+		})
+		return map[string]interface{}{
+			"status":  "error",
+			"message": fmt.Sprintf("stdio process failed: %v", runErr),
+		}, exitCode(runErr)
+	}
+
+	// Now parse stdout as JSON response.
+	// NOTE: stdout may contain extra lines, so we try to extract the last valid JSON object.
+	resp, parseErr := parseLastJSONObject(stdoutStr)
+	if parseErr != nil {
+		writeLogLine(w, map[string]interface{}{
+			"level":   "error",
+			"message": "resp decode failed",
+			"error":   parseErr.Error(),
+			"stdout":  trimForLog(stdoutStr, 4000),
+			"stderr":  trimForLog(stderrStr, 4000),
+		})
+		return map[string]interface{}{
+			"status":  "error",
+			"message": parseErr.Error(),
+		}, 1
+	}
+
+	// success
+	return resp, 0
+
 }
 
 // isBareCommand reports whether program path is a single token without any path separator.
