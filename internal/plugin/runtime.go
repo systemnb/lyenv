@@ -503,7 +503,6 @@ func findPythonOnWindows() (prog string, extraArgs []string, ok bool) {
 	return "", nil, false
 }
 
-
 // spawnStdio starts a stdio-capable program.
 // - Workdir resolution: prefer spec.Workdir (abs or plugin-relative), else <plugin>/scripts if exists, else <plugin>.
 // - Program resolution: abs => as-is; relative with path sep => join with <plugin>; bare name => check in workdir first.
@@ -537,7 +536,7 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 	prog = filepath.FromSlash(prog)
 	if prog == "" {
 		return map[string]interface{}{"status": "error", "message": "stdio executor requires 'program'"}, 1
-	} 
+	}
 
 	entry := prog
 	if filepath.IsAbs(prog) {
@@ -613,13 +612,12 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 			// Better: use a local variable for interpreterExtraArgs.
 			useInterpreter = true
 			scriptAbs = entry
-		
+
 			// Store interpreter extra args into args prefix for this call:
 			// We'll pass: interp <extra...> <scriptAbs> <args...>
 			if len(extra) > 0 {
 				args = append(extra, args...)
 			}
-		
 
 		case strings.HasSuffix(low, ".js"):
 			if p, e := exec.LookPath("node"); e == nil {
