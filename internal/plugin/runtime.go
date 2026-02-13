@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -475,39 +474,11 @@ func trimForLog(s string, max int) string {
 	return s[:max] + "...(truncated)"
 }
 
-func isWindowsAppsStub(p string) bool {
-	low := strings.ToLower(p)
-	// Typical Windows Store alias location:
-	// C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\python.exe
-	return strings.Contains(low, `\microsoft\windowsapps\`)
-}
-
-// findPythonOnWindows tries in this order:
-// 1) py launcher (best)
-// 2) python / python3, but reject WindowsApps stub
-func findPythonOnWindows() (prog string, extraArgs []string, ok bool) {
-	// 1) py launcher (recommended on Windows)
-	if p, err := exec.LookPath("py"); err == nil && !isWindowsAppsStub(p) {
-		// Use py -3 (Python 3) to run scripts
-		return p, []string{"-3"}, true
-	}
-
-	// 2) python / python3 (reject WindowsApps stub)
-	if p, err := exec.LookPath("python"); err == nil && !isWindowsAppsStub(p) {
-		return p, nil, true
-	}
-	if p, err := exec.LookPath("python3"); err == nil && !isWindowsAppsStub(p) {
-		return p, nil, true
-	}
-
-	return "", nil, false
-}
-
-
 // spawnStdio starts a stdio-capable program.
 // - Workdir resolution: prefer spec.Workdir (abs or plugin-relative), else <plugin>/scripts if exists, else <plugin>.
 // - Program resolution: abs => as-is; relative with path sep => join with <plugin>; bare name => check in workdir first.
 // - Shebang detection: if shebang exists, explicitly launch the interpreter with script path.
+// - Windows fallback: wrap .py/.js/.sh with interpreter (py/python/node/bash).
 // - Sends JSON request to stdin; decodes JSON response from stdout.
 func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req map[string]interface{}, w *bufio.Writer) (map[string]interface{}, int) {
 	// Ensure absolute plugin directory.
@@ -534,15 +505,18 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 
 	// Resolve entry program.
 	prog := strings.TrimSpace(spec.Program)
-	prog = filepath.FromSlash(prog)
 	if prog == "" {
 		return map[string]interface{}{"status": "error", "message": "stdio executor requires 'program'"}, 1
-	} 
+	}
+
+	// Normalize path separators (important for Windows when manifest uses ./scripts/x.py).
+	prog = filepath.FromSlash(prog)
 
 	entry := prog
 	if filepath.IsAbs(prog) {
 		// use as-is
 	} else if strings.Contains(prog, "\\") || strings.Contains(prog, "/") {
+		// treat as plugin-relative path
 		entry = filepath.Join(absPluginDir, prog)
 	} else {
 		// bare program name => prefer file in workdir if present
@@ -558,7 +532,30 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 	useInterpreter := false
 	interp := ""
 	scriptAbs := ""
+	interpExtra := []string{} // interpreter flags, e.g. ["-3"] for py launcher
 
+	// Small helpers (kept inside function to avoid changing other files).
+	isWindowsAppsStub := func(p string) bool {
+		low := strings.ToLower(p)
+		return strings.Contains(low, `\microsoft\windowsapps\`)
+	}
+
+	findPythonOnWindows := func() (string, []string, bool) {
+		// Prefer py launcher (best on Windows).
+		if p, e := exec.LookPath("py"); e == nil && !isWindowsAppsStub(p) {
+			return p, []string{"-3"}, true
+		}
+		// Prefer real python, reject WindowsApps stub.
+		if p, e := exec.LookPath("python"); e == nil && !isWindowsAppsStub(p) {
+			return p, nil, true
+		}
+		if p, e := exec.LookPath("python3"); e == nil && !isWindowsAppsStub(p) {
+			return p, nil, true
+		}
+		return "", nil, false
+	}
+
+	// Shebang detection (works well on Unix; Windows not reliable, but keep it).
 	if st, err := os.Stat(entry); err == nil && !st.IsDir() {
 		f, err := os.Open(entry)
 		if err == nil {
@@ -586,9 +583,7 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		}
 	}
 
-	// --- Windows fallback: if shebang not detected/usable, run by extension ---
-	// On Windows, shebang is not a reliable execution mechanism.
-	// If entry is a script file, wrap it with an interpreter from PATH.
+	// --- Windows fallback: wrap scripts by extension ---
 	if runtime.GOOS == "windows" && !useInterpreter {
 		low := strings.ToLower(entry)
 
@@ -596,46 +591,24 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		case strings.HasSuffix(low, ".py"):
 			p, extra, ok := findPythonOnWindows()
 			if !ok {
-				writeLogLine(w, map[string]interface{}{
-					"level":   "error",
-					"message": "python not found in PATH (or only WindowsApps stub). Install Python or disable App Execution Aliases.",
-					"entry":   entry,
-				})
-				return map[string]interface{}{
-					"status":  "error",
-					"message": "python not found in PATH (or only WindowsApps stub). Install Python or disable App Execution Aliases.",
-				}, 1
+				msg := "python not found in PATH (or only WindowsApps stub). Install Python or disable App Execution Aliases."
+				writeLogLine(w, map[string]interface{}{"level": "error", "message": msg, "entry": entry})
+				return map[string]interface{}{"status": "error", "message": msg}, 1
 			}
 			interp = p
-			// IMPORTANT: if using "py", we must include extra args like "-3"
-			// We'll prepend them later when building cmd.
-			// Store them temporarily by injecting into spec.Args prefix (simplest local approach below).
-			// Better: use a local variable for interpreterExtraArgs.
+			interpExtra = extra // e.g. ["-3"] when using py
 			useInterpreter = true
 			scriptAbs = entry
-		
-			// Store interpreter extra args into args prefix for this call:
-			// We'll pass: interp <extra...> <scriptAbs> <args...>
-			if len(extra) > 0 {
-				args = append(extra, args...)
-			}
-		
 
 		case strings.HasSuffix(low, ".js"):
-			if p, e := exec.LookPath("node"); e == nil {
+			if p, e := exec.LookPath("node"); e == nil && !isWindowsAppsStub(p) {
 				interp = p
 				useInterpreter = true
 				scriptAbs = entry
 			} else {
-				writeLogLine(w, map[string]interface{}{
-					"level":   "error",
-					"message": "node not found in PATH (required for .js stdio scripts on Windows)",
-					"entry":   entry,
-				})
-				return map[string]interface{}{
-					"status":  "error",
-					"message": "node not found in PATH (required for .js stdio scripts on Windows)",
-				}, 1
+				msg := "node not found in PATH (required for .js stdio scripts on Windows)"
+				writeLogLine(w, map[string]interface{}{"level": "error", "message": msg, "entry": entry})
+				return map[string]interface{}{"status": "error", "message": msg}, 1
 			}
 
 		case strings.HasSuffix(low, ".sh"):
@@ -645,26 +618,18 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 				useInterpreter = true
 				scriptAbs = entry
 			} else {
-				writeLogLine(w, map[string]interface{}{
-					"level":   "error",
-					"message": "bash not found in PATH (required for .sh scripts on Windows)",
-					"entry":   entry,
-				})
-				return map[string]interface{}{
-					"status":  "error",
-					"message": "bash not found in PATH (required for .sh scripts on Windows)",
-				}, 1
+				msg := "bash not found in PATH (required for .sh scripts on Windows)"
+				writeLogLine(w, map[string]interface{}{"level": "error", "message": msg, "entry": entry})
+				return map[string]interface{}{"status": "error", "message": msg}, 1
 			}
 		}
 	}
 
-	// If no interpreter was resolved from shebang, pick one by file extension.
-	// This keeps stdio scripts runnable even without a shebang line.
+	// Non-Windows fallback: if no shebang, try by extension (keeps scripts runnable).
 	if !useInterpreter {
 		ext := strings.ToLower(filepath.Ext(entry))
 		switch ext {
 		case ".py":
-			// Prefer python3, fallback to python
 			if abs, err := exec.LookPath("python3"); err == nil {
 				interp = abs
 			} else if abs, err := exec.LookPath("python"); err == nil {
@@ -687,9 +652,13 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		}
 	}
 
+	// Build cmd
 	var cmd *exec.Cmd
 	if useInterpreter && interp != "" && scriptAbs != "" {
-		fullArgs := append([]string{scriptAbs}, args...)
+		// interp <interpExtra...> <scriptAbs> <args...>
+		fullArgs := append([]string{}, interpExtra...)
+		fullArgs = append(fullArgs, scriptAbs)
+		fullArgs = append(fullArgs, args...)
 		cmd = exec.CommandContext(ctx, interp, fullArgs...)
 	} else {
 		cmd = exec.CommandContext(ctx, entry, args...)
@@ -697,7 +666,30 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 
 	cmd.Dir = resolvedWorkdir
 	cmd.Env = withExtraEnv(os.Environ(), spec.Env)
-	cmd.Stderr = newLogWriter(w, "stderr")
+
+	// Capture stdout/stderr
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	// IMPORTANT: send request JSON to stdin
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		writeLogLine(w, map[string]interface{}{
+			"level":   "error",
+			"message": "stdin pipe failed",
+			"error":   err.Error(),
+			"entry":   entry,
+		})
+		return map[string]interface{}{"status": "error", "message": err.Error()}, 1
+	}
+
+	go func() {
+		enc := json.NewEncoder(stdinPipe)
+		_ = enc.Encode(req)
+		_ = stdinPipe.Close()
+	}()
 
 	// Debug: write spawn context to plugin JSONL log.
 	writeLogLine(w, map[string]interface{}{
@@ -709,35 +701,44 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		"workdir": cmd.Dir,
 	})
 
-	var outBuf bytes.Buffer
-	var errBuf bytes.Buffer
-
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
+	// Run
 	runErr := cmd.Run()
 
 	stdoutStr := outBuf.String()
 	stderrStr := errBuf.String()
 
-	// Always log stderr if non-empty (super important on Windows)
+	// Log stderr if non-empty
 	if strings.TrimSpace(stderrStr) != "" {
 		writeLogLine(w, map[string]interface{}{
 			"level":   "error",
 			"message": "stdio stderr",
 			"entry":   entry,
-			"stderr":  stderrStr,
+			"stderr":  trimForLog(stderrStr, 4000),
 		})
 	}
 
+	// If process failed, try to parse stdout as a stdio response (often contains useful JSON error).
 	if runErr != nil {
-		// If process failed, surface error + stderr
+		if strings.TrimSpace(stdoutStr) != "" {
+			if resp2, err2 := parseLastJSONObject(stdoutStr); err2 == nil {
+				writeLogLine(w, map[string]interface{}{
+					"level":   "error",
+					"message": "stdio returned error response",
+					"entry":   entry,
+					"error":   runErr.Error(),
+					"stdout":  trimForLog(stdoutStr, 2000),
+					"stderr":  trimForLog(stderrStr, 2000),
+				})
+				return resp2, exitCode(runErr)
+			}
+		}
+
 		writeLogLine(w, map[string]interface{}{
 			"level":   "error",
 			"message": "stdio process failed",
 			"entry":   entry,
 			"error":   runErr.Error(),
-			"stderr":  stderrStr,
+			"stderr":  trimForLog(stderrStr, 2000),
 			"stdout":  trimForLog(stdoutStr, 2000),
 		})
 		return map[string]interface{}{
@@ -746,8 +747,7 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		}, exitCode(runErr)
 	}
 
-	// Now parse stdout as JSON response.
-	// NOTE: stdout may contain extra lines, so we try to extract the last valid JSON object.
+	// Parse stdout as JSON response (last JSON object).
 	resp, parseErr := parseLastJSONObject(stdoutStr)
 	if parseErr != nil {
 		writeLogLine(w, map[string]interface{}{
@@ -763,9 +763,7 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 		}, 1
 	}
 
-	// success
 	return resp, 0
-
 }
 
 // isBareCommand reports whether program path is a single token without any path separator.
@@ -961,51 +959,4 @@ func copyFile(src, dst string) error {
 
 	_, err = io.Copy(out, in)
 	return err
-}
-
-func normalizeProgramForOS(spec *CommandSpec) (string, []string, error) {
-	prog := spec.Program
-	args := append([]string{}, spec.Args...)
-
-	// Only apply on Windows. Unix can execute shebang scripts directly.
-	if runtime.GOOS != "windows" {
-		return prog, args, nil
-	}
-
-	low := strings.ToLower(strings.TrimSpace(prog))
-
-	// If program is plugin-relative like ./scripts/a.py, keep it as-is, exec.Command can handle it
-	// but Windows can't execute .py directly, so we wrap it with python.
-	switch {
-	case strings.HasSuffix(low, ".py"):
-		// Prefer python3, fallback python.
-		py := ""
-		if p, err := exec.LookPath("python3"); err == nil {
-			py = p
-		} else if p, err := exec.LookPath("python"); err == nil {
-			py = p
-		} else {
-			return "", nil, errors.New("python not found in PATH (required to run .py stdio scripts on Windows)")
-		}
-		// python <script> <args...>
-		return py, append([]string{prog}, args...), nil
-
-	case strings.HasSuffix(low, ".js"):
-		node, err := exec.LookPath("node")
-		if err != nil {
-			return "", nil, errors.New("node not found in PATH (required to run .js stdio scripts on Windows)")
-		}
-		return node, append([]string{prog}, args...), nil
-
-	case strings.HasSuffix(low, ".sh"):
-		// If user has Git-Bash or WSL bash in PATH, allow it.
-		bash, err := exec.LookPath("bash")
-		if err != nil {
-			return "", nil, errors.New("bash not found in PATH (required to run .sh scripts on Windows)")
-		}
-		return bash, append([]string{prog}, args...), nil
-	}
-
-	// For exe/cmd/ps1, do nothing
-	return prog, args, nil
 }
