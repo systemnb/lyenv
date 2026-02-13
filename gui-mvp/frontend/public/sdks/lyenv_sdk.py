@@ -9,11 +9,14 @@ Features:
 - Emit logs / artifacts
 - Write mutations (global/plugin) with dotted-path
 - respond_ok / respond_error with safety guards
+
+Compatibility:
+- plugin_write_config supports legacy calls and new kwargs (scope/merge/...)
 """
 
 import sys
 import json
-from typing import Any, Dict, Optional, List, Union
+from typing import Any, Dict, Optional, List
 
 _REQUEST: Dict[str, Any] = {}
 _RESPONDED: bool = False
@@ -123,6 +126,16 @@ def config_global(key: str, default: Any = None) -> Any:
 def config_plugin(key: str, default: Any = None) -> Any:
     return config_get(key, default, scope="plugin")
 
+# Optional aliases (nice to have)
+def config(key: str, default: Any = None) -> Any:
+    return config_plugin(key, default)
+
+def plugin_config(key: str, default: Any = None) -> Any:
+    return config_plugin(key, default)
+
+def global_config(key: str, default: Any = None) -> Any:
+    return config_global(key, default)
+
 # ---------------------------
 # Response helpers (logs/artifacts/mutations)
 # ---------------------------
@@ -157,12 +170,32 @@ def mutate(key: str, value: Any, scope: str = "plugin") -> None:
     target = ms["plugin"] if scope == "plugin" else ms["global"]
     _set_by_path(target, key, value)
 
-def plugin_write_config(key: str, value: Any) -> None:
-    """Backwards compatible alias (plugin scope)."""
-    mutate(key, value, scope="plugin")
+# ✅ FIXED: Backward/forward compatible signature
+def plugin_write_config(
+    key: str,
+    value: Any,
+    scope: str = "plugin",
+    merge: Optional[str] = None,
+    **kwargs: Any
+) -> None:
+    """
+    Backward/forward compatible config mutation writer.
+
+    - scope: "plugin" or "global"
+    - merge: reserved (merge strategy handled by core)
+    - kwargs: ignored for forward compatibility
+    """
+    _ensure_request_loaded()
+    mutate(key, value, scope=scope)
 
 def global_write_config(key: str, value: Any) -> None:
-    """Convenience helper for global scope."""
+    mutate(key, value, scope="global")
+
+# Optional nicer aliases
+def plugin_mutate(key: str, value: Any) -> None:
+    mutate(key, value, scope="plugin")
+
+def global_mutate(key: str, value: Any) -> None:
     mutate(key, value, scope="global")
 
 # ---------------------------

@@ -1,60 +1,120 @@
 # -*- coding: utf-8 -*-
-"""flow_sdk.py - Flow helper using lyenv_sdk plugin mutations.
+"""
+flow_sdk.py - Flow helper SDK for lyenv GUI-exported stdio workflows.
 
-Conventions:
-  - Write outputs to plugin config:
-      flow.outputs.<node_id>.<port> = "<string>"
-  - Read inputs from plugin config based on wiring map.
+Goals:
+- Make node authoring "business-only": inputs -> outputs
+- Hide wiring/config plumbing behind simple helpers
+- Store outputs in plugin config at:
+    flow.outputs.<node_id>.<port> = "<string>"
+- Read upstream values using wiring map:
+    wiring[dst_node_id][dst_input_port] = { "node": src_node_id, "port": src_output_port }
 
-Start node:
-  - is_source=True, inputs are CLI args mapped by Start output port order.
+Requires:
+- lyenv_sdk.py injected in the same scripts folder
+  (plugin_write_config supports scope="plugin")
 """
 
 import json
-from typing import Any, Dict, List
-from lyenv_sdk import plugin_write_config
+from typing import Any, Dict, List, Optional, Tuple
 
-def _get_plugin_cfg(req: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = {}
-    if isinstance(req.get("config"), dict):
-        cfg = req["config"].get("plugin") or {}
-    if not cfg and isinstance(req.get("plugin_config"), dict):
-        cfg = req.get("plugin_config") or {}
-    if not cfg and isinstance(req.get("plugin"), dict):
-        cfg = req.get("plugin") or {}
-    return cfg if isinstance(cfg, dict) else {}
+from lyenv_sdk import plugin_write_config, config_plugin, log
 
-def _get_by_path(m: Dict[str, Any], dotted: str) -> Any:
-    cur: Any = m
-    for p in dotted.split("."):
-        if not isinstance(cur, dict) or p not in cur:
-            return None
-        cur = cur[p]
-    return cur
 
-def set_output(node_id: str, port: str, value: Any):
-    plugin_write_config(f"flow.outputs.{node_id}.{port}", "" if value is None else str(value), scope="plugin")
+# ---------------------------
+# Config storage convention
+# ---------------------------
 
-def get_output(cfg: Dict[str, Any], node_id: str, port: str) -> str:
-    v = _get_by_path(cfg, f"flow.outputs.{node_id}.{port}")
+def _flow_key(node_id: str, port: str) -> str:
+    return f"flow.outputs.{node_id}.{port}"
+
+
+def set_output(node_id: str, port: str, value: Any) -> None:
+    """Write one output to plugin mutations (flow.outputs...)."""
+    plugin_write_config(_flow_key(node_id, port), "" if value is None else str(value), scope="plugin")
+
+
+def set_outputs(node_id: str, outputs: Dict[str, Any]) -> None:
+    """Write multiple outputs {port:value}."""
+    for k, v in (outputs or {}).items():
+        set_output(node_id, k, v)
+
+
+def get_output(node_id: str, port: str, default: str = "") -> str:
+    """Read one output from plugin config (merged into request)."""
+    v = config_plugin(_flow_key(node_id, port), default)
     return "" if v is None else str(v)
 
+
+# ---------------------------
+# Wiring helpers
+# ---------------------------
+
 def load_wiring(path: str) -> Dict[str, Any]:
+    """Load wiring JSON: dstNodeId -> dstInputPort -> {node, port}."""
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f) or {}
 
-def build_inputs(req: Dict[str, Any], wiring: Dict[str, Any], node_id: str, input_ports: List[str]) -> List[str]:
-    cfg = _get_plugin_cfg(req)
-    mapping: Dict[str, Any] = (wiring.get(node_id) or {})
+
+def resolve_ref(wiring: Dict[str, Any], dst_node_id: str, dst_input_port: str) -> Optional[Tuple[str, str]]:
+    """
+    Resolve (src_node_id, src_port) for a given dst input port.
+    Returns None if not wired.
+    """
+    m = (wiring or {}).get(dst_node_id) or {}
+    ref = m.get(dst_input_port)
+    if isinstance(ref, dict):
+        src_node = str(ref.get("node") or "")
+        src_port = str(ref.get("port") or "")
+        if src_node and src_port:
+            return (src_node, src_port)
+    return None
+
+
+def get_inputs(req: Dict[str, Any], wiring: Dict[str, Any], node_id: str, input_ports: List[str], default: str = "") -> List[str]:
+    """
+    Return inputs for node_id in the exact order of input_ports.
+    Each value comes from upstream output according to wiring.
+    """
     argv: List[str] = []
     for name in input_ports:
-        ref = mapping.get(name)
-        if ref and isinstance(ref, dict):
-            argv.append(get_output(cfg, ref.get("node",""), ref.get("port","")))
+        ref = resolve_ref(wiring, node_id, name)
+        if ref:
+            src_node, src_port = ref
+            argv.append(get_output(src_node, src_port, default))
         else:
-            argv.append("")
+            argv.append(default)
     return argv
 
-def write_outputs(node_id: str, output_ports: List[str], values: List[str]):
-    for i, p in enumerate(output_ports):
-        set_output(node_id, p, values[i] if i < len(values) else "")
+
+def get_input(req: Dict[str, Any], wiring: Dict[str, Any], node_id: str, port_name: str, default: str = "") -> str:
+    """Convenience: read one input port value."""
+    vals = get_inputs(req, wiring, node_id, [port_name], default=default)
+    return vals[0] if vals else default
+
+
+# ---------------------------
+# Debug utilities
+# ---------------------------
+
+def debug_dump_wiring(wiring: Dict[str, Any], node_id: Optional[str] = None) -> None:
+    """
+    Log wiring map (whole or per node) for debugging in GUI console.
+    """
+    if node_id:
+        log({ "wiring": { node_id: (wiring or {}).get(node_id, {}) } })
+    else:
+        log({ "wiring": wiring or {} })
+
+
+def debug_dump_io(req: Dict[str, Any], wiring: Dict[str, Any], node_id: str, input_ports: List[str], output_ports: Optional[List[str]] = None) -> None:
+    """
+    Log resolved inputs and (optionally) current stored outputs.
+    Useful for debugging dataflow quickly.
+    """
+    ins = get_inputs(req, wiring, node_id, input_ports, default="")
+    log({ "node": node_id, "inputs": dict(zip(input_ports, ins)) })
+
+    if output_ports:
+        outs = { p: get_output(node_id, p, "") for p in output_ports }
+        log({ "node": node_id, "outputs": outs })

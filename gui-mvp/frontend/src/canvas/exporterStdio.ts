@@ -124,23 +124,23 @@ function extractTopoOrder(nodes: RFNode[], edges: RFEdge[], scope: Set<string>):
     const y = (n as any)?.position?.y ?? 0
     return { x, y, id }
   }
-  
+
   const cmp = (a: string, b: string) => {
     // Keep Start earliest whenever possible
     if (a === start.id) return -1
     if (b === start.id) return 1
-  
+
     const ka = sortKey(a), kb = sortKey(b)
-  
+
     // Left-to-right first
     if (ka.x !== kb.x) return ka.x - kb.x
     // Then top-to-bottom
     if (ka.y !== kb.y) return ka.y - kb.y
-  
+
     // Stable tie-breaker
     return ka.id.localeCompare(kb.id)
   }
-  
+
 
   // init queue (indegree 0)
   const queue: string[] = []
@@ -420,13 +420,13 @@ module.exports={read_request,respond_ok,respond_error};
 // Runner templates
 // -------------------------
 
-/** Runner for Start node: map CLI args -> Start output ports -> config */
+/** Runner for Start node: map CLI args -> Start output ports -> flow.outputs */
 function makeStartRunnerPy(startId: string, outPorts: string[]): string {
   const outJson = JSON.stringify(outPorts)
   return `# -*- coding: utf-8 -*-
-# start_runner.py - stdio runner for Start node (CLI args -> config)
+# start_runner.py - stdio runner for Start node (CLI args -> flow outputs)
 from lyenv_sdk import read_request, respond_ok, respond_error, log
-from flow_sdk import write_outputs
+from flow_sdk import set_outputs
 
 START_ID = ${JSON.stringify(startId)}
 OUT_PORTS = ${outJson}
@@ -435,10 +435,14 @@ def main():
     try:
         req = read_request()
         args = [str(x) for x in (req.get("args") or [])]
-        write_outputs(START_ID, OUT_PORTS, args)
-        # keep empty message to reduce console noise
-        log({ "start_args": args })
-        log({ "start_outputs": dict(zip(OUT_PORTS, args)) })
+
+        # Map args by port order; missing values become ""
+        vals = { OUT_PORTS[i]: (args[i] if i < len(args) else "") for i in range(len(OUT_PORTS)) }
+
+        log({ "start_args": args, "start_outputs": vals })
+        set_outputs(START_ID, vals)
+
+        # Keep empty message to reduce console noise
         respond_ok("")
     except Exception as e:
         respond_error(str(e))
@@ -448,13 +452,14 @@ if __name__ == "__main__":
 `
 }
 
+
 /** Runner for End node: read inputs -> respond_ok (final output) */
 function makeEndRunnerPy(endId: string, inPorts: string[]): string {
   const inJson = JSON.stringify(inPorts)
   return `# -*- coding: utf-8 -*-
-# end_runner.py - stdio runner for End node (config -> response)
+# end_runner.py - stdio runner for End node (flow outputs -> final response)
 from lyenv_sdk import read_request, respond_ok, respond_error, log
-from flow_sdk import load_wiring, build_inputs
+from flow_sdk import load_wiring, get_inputs
 
 END_ID = ${JSON.stringify(endId)}
 IN_PORTS = ${inJson}
@@ -463,7 +468,8 @@ def main():
     try:
         req = read_request()
         wiring = load_wiring("./scripts/flow_wiring.json")
-        vals = build_inputs(req, wiring, END_ID, IN_PORTS)
+        vals = get_inputs(req, wiring, END_ID, IN_PORTS, default="")
+
         msg = " ".join(vals).strip()
         log({ "end_inputs": dict(zip(IN_PORTS, vals)) })
         respond_ok(msg)
@@ -474,6 +480,7 @@ if __name__ == "__main__":
     main()
 `
 }
+
 
 /** Runner for normal node: read inputs -> run underlying program -> write outputs -> respond_ok */
 function makeNodeRunnerPy(
@@ -493,8 +500,9 @@ import subprocess
 import sys
 import json
 from typing import List, Any
+
 from lyenv_sdk import read_request, log, respond_ok, respond_error
-from flow_sdk import load_wiring, build_inputs, write_outputs
+from flow_sdk import load_wiring, get_inputs, set_outputs, debug_dump_io
 
 NODE_ID = ${JSON.stringify(nodeId)}
 INPUT_PORTS = ${JSON.stringify(inputPorts)}
@@ -508,9 +516,9 @@ def _as_text(x: Any) -> str:
 def _parse_outputs(stdout_text: str, out_count: int) -> List[str]:
     """
     Output parsing strategy:
-    1) If stdout is JSON array: ["a","b",...], map by index
+    1) If stdout is JSON array: ["a","b",...], map by index (recommended)
     2) Else if out_count == 1: return raw text
-    3) Else fallback: split() tokens (last resort)
+    3) Else fallback: split() tokens (last resort; unsafe for spaces)
     """
     s = (stdout_text or "").strip()
     if out_count <= 0:
@@ -518,12 +526,11 @@ def _parse_outputs(stdout_text: str, out_count: int) -> List[str]:
     if s == "":
         return [""] * out_count
 
-    # Try JSON array first (recommended for multi-output)
+    # Try JSON array first
     try:
         obj = json.loads(s)
         if isinstance(obj, list):
-            arr = [ _as_text(v) for v in obj ]
-            # pad / trim
+            arr = [_as_text(v) for v in obj]
             if len(arr) < out_count:
                 arr = arr + [""] * (out_count - len(arr))
             return arr[:out_count]
@@ -533,7 +540,6 @@ def _parse_outputs(stdout_text: str, out_count: int) -> List[str]:
     if out_count == 1:
         return [s]
 
-    # fallback split (unsafe if values contain spaces)
     parts = s.split()
     if len(parts) < out_count:
         parts = parts + [""] * (out_count - len(parts))
@@ -543,13 +549,10 @@ def main():
     try:
         req = read_request()
         wiring = load_wiring("./scripts/flow_wiring.json")
-        argv = build_inputs(req, wiring, NODE_ID, INPUT_PORTS)
 
-        # Debug: log resolved inputs for this node
-        try:
-            log({ "node": NODE_ID, "inputs": dict(zip(INPUT_PORTS, argv)) })
-        except Exception:
-            log("node inputs: " + str(argv))
+        argv = get_inputs(req, wiring, NODE_ID, INPUT_PORTS, default="")
+        # Debug dump inputs/outputs (outputs read from stored flow.outputs)
+        debug_dump_io(req, wiring, NODE_ID, INPUT_PORTS, OUTPUT_PORTS)
 
         cmd = [PROGRAM] + list(FIXED_ARGS) + argv
         log({ "node": NODE_ID, "cmd": cmd })
@@ -561,7 +564,6 @@ def main():
             return
 
         if p.stderr:
-            # keep stderr in logs for debugging (truncate)
             s = p.stderr.strip()
             if len(s) > 2000:
                 s = s[:2000] + "...(truncated)"
@@ -575,13 +577,12 @@ def main():
             return
 
         outs = _parse_outputs(p.stdout, len(OUTPUT_PORTS))
-        write_outputs(NODE_ID, OUTPUT_PORTS, outs)
 
-        # Debug: log node outputs
-        try:
-            log({ "node": NODE_ID, "outputs": dict(zip(OUTPUT_PORTS, outs)) })
-        except Exception:
-            log("node outputs: " + str(outs))
+        # Write outputs back to flow bus (mutations.plugin)
+        set_outputs(NODE_ID, dict(zip(OUTPUT_PORTS, outs)))
+
+        # Debug outputs for this step
+        log({ "node": NODE_ID, "outputs": dict(zip(OUTPUT_PORTS, outs)) })
 
         respond_ok("")
     except Exception as e:
@@ -591,6 +592,7 @@ if __name__ == "__main__":
     main()
 `
 }
+
 
 
 // -------------------------
@@ -625,11 +627,15 @@ export async function buildManifestAndFilesStdio(
   const sdkSh = await loadPublicText('sdks/lyenv_sdk.sh', fallbackLyenvSdkSh())
   const sdkJs = await loadPublicText('sdks/lyenv_sdk.js', fallbackLyenvSdkJs())
   const flowPy = await loadPublicText('sdks/flow_sdk.py', fallbackFlowSdkPy())
+  const flowJs = await loadPublicText('sdks/flow_sdk.js', '/* fallback flow_sdk.js missing */\n')
+  const flowSh = await loadPublicText('sdks/flow_sdk.sh', '#!/usr/bin/env bash\n# fallback flow_sdk.sh missing\n')
 
   files.push({ path: 'scripts/lyenv_sdk.py', content: sdkPy })
   files.push({ path: 'scripts/lyenv_sdk.sh', content: sdkSh })
   files.push({ path: 'scripts/lyenv_sdk.js', content: sdkJs })
   files.push({ path: 'scripts/flow_sdk.py', content: flowPy })
+  files.push({ path: 'scripts/flow_sdk.js', content: flowJs })
+  files.push({ path: 'scripts/flow_sdk.sh', content: flowSh })
 
   const nodeById = new Map(allNodes.map((n) => [n.id, n] as const))
 
