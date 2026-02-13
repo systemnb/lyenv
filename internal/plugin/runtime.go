@@ -917,10 +917,7 @@ func echoStdioSideEffects(resp map[string]interface{}) {
 
 	// NEW: print message if present
 	if msg, ok := resp["message"].(string); ok && strings.TrimSpace(msg) != "" && !isJSONMode() {
-		// Filter out noisy step "ok" messages in multi-step flows
-		if strings.TrimSpace(msg) != "ok" {
-			fmt.Fprintln(out, msg)
-		}
+		fmt.Fprintln(out, msg)
 	}
 
 	if logs, ok := resp["logs"].([]interface{}); ok {

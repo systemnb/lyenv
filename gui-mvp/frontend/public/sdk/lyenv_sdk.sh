@@ -1,166 +1,171 @@
 #!/usr/bin/env bash
-# -*- coding: utf-8 -*-
-# lyenv_sdk.sh - Minimal Bash SDK for lyenv stdio plugins.
-# Reads 1-line JSON request from stdin and prints 1-line JSON response to stdout.
-# Uses python3 to safely build/merge JSON (no jq dependency).
+# lyenv_sdk.sh - Bash SDK for lyenv stdio plugins (minimal, with config read/write).
+# Requires: jq (recommended). If jq missing, will fallback to python for JSON parsing if available.
 
 set -euo pipefail
 
-_LYENV_REQ=""
-_LYENV_STATUS="ok"
-_LYENV_MESSAGE=""
-declare -a _LYENV_LOGS=()
-declare -a _LYENV_ARTIFACTS=()
-_LYENV_MUT_GLOBAL="{}"
-_LYENV_MUT_PLUGIN="{}"
+LYENV_REQ_JSON=""
+LYENV_RESP_STATUS="ok"
+LYENV_RESP_MESSAGE=""
+LYENV_RESP_LOGS=()
+LYENV_RESP_ARTIFACTS=()
+LYENV_MUT_GLOBAL="{}"
+LYENV_MUT_PLUGIN="{}"
 
-lyenv_read_request() {
-  if ! IFS= read -r _LYENV_REQ; then
+ly_read_request() {
+  # Read all stdin
+  LYENV_REQ_JSON="$(cat)"
+  if [[ -z "${LYENV_REQ_JSON//[[:space:]]/}" ]]; then
     echo "lyenv_sdk: empty stdin" >&2
     return 1
   fi
 }
 
-lyenv_log() {
-  _LYENV_LOGS+=("$*")
+# --- JSON helpers ---
+
+_has_jq() { command -v jq >/dev/null 2>&1; }
+_has_py() { command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; }
+
+_json_get() {
+  local json="$1"
+  local jqexpr="$2"
+  if _has_jq; then
+    echo "$json" | jq -r "$jqexpr"
+  elif _has_py; then
+    local pybin="python"
+    command -v python >/dev/null 2>&1 || pybin="python3"
+    "$pybin" - <<'PY' "$json" "$jqexpr"
+import sys, json
+j = json.loads(sys.argv[1])
+expr = sys.argv[2]
+# very small subset: ".a.b.c" only
+path = expr.strip()
+if path.startswith("."):
+    path = path[1:]
+cur = j
+if path:
+    for p in path.split("."):
+        if isinstance(cur, dict) and p in cur:
+            cur = cur[p]
+        else:
+            cur = ""
+            break
+print(cur if cur is not None else "")
+PY
+  else
+    echo ""  # no parser available
+  fi
 }
 
-lyenv_emit_artifact() {
-  _LYENV_ARTIFACTS+=("$1")
+# request getters
+ly_action() { _json_get "$LYENV_REQ_JSON" '.action'; }
+ly_args_json() { _json_get "$LYENV_REQ_JSON" '.args | @json'; }
+ly_path() {
+  local key="$1"
+  _json_get "$LYENV_REQ_JSON" ".paths.${key}"
 }
 
-# dotted path setter via python3
-_lyenv_set_by_path() {
-  local json_in="$1"
+# config getters: scope=plugin/global and dotted path like driver.name
+ly_config_get() {
+  local scope="$1"    # plugin/global
+  local dotted="$2"   # a.b.c
+  local jqpath=".config.${scope}"
+  # convert dotted to jq: .a.b.c
+  local sub=""
+  IFS='.' read -r -a parts <<< "$dotted"
+  for p in "${parts[@]}"; do
+    sub="${sub}.${p}"
+  done
+  _json_get "$LYENV_REQ_JSON" "${jqpath}${sub}"
+}
+
+# response helpers
+ly_log() { LYENV_RESP_LOGS+=("$*"); }
+ly_emit_artifact() { LYENV_RESP_ARTIFACTS+=("$*"); }
+
+# mutations: write dotted into JSON (uses jq if possible; python fallback otherwise)
+ly_mutate_set() {
+  local scope="$1"  # plugin/global
   local dotted="$2"
   local value="$3"
-  python3 - "$json_in" "$dotted" "$value" <<'PY'
+
+  local target=""
+  if [[ "$scope" == "global" ]]; then
+    target="$LYENV_MUT_GLOBAL"
+  else
+    target="$LYENV_MUT_PLUGIN"
+  fi
+
+  if _has_jq; then
+    # Build jq assignment like .a.b.c = "value"
+    local jqassign="."
+    IFS='.' read -r -a parts <<< "$dotted"
+    for p in "${parts[@]}"; do
+      jqassign="${jqassign}${p:+.${p}}"
+    done
+    target="$(echo "$target" | jq --arg v "$value" "${jqassign}=\$v")"
+  elif _has_py; then
+    local pybin="python"
+    command -v python >/dev/null 2>&1 || pybin="python3"
+    target="$("$pybin" - <<'PY' "$target" "$dotted" "$value"
 import sys, json
-m = json.loads(sys.argv[1])
+obj = json.loads(sys.argv[1])
 dotted = sys.argv[2]
 val = sys.argv[3]
-cur = m
+cur = obj
 parts = dotted.split(".")
-for i, p in enumerate(parts):
-    if i == len(parts) - 1:
+for i,p in enumerate(parts):
+    if i == len(parts)-1:
         cur[p] = val
     else:
-        cur = cur.setdefault(p, {})
-print(json.dumps(m, ensure_ascii=False))
+        if p not in cur or not isinstance(cur[p], dict):
+            cur[p] = {}
+        cur = cur[p]
+print(json.dumps(obj, ensure_ascii=False))
 PY
-}
-
-lyenv_plugin_write_config() {
-  local key="$1"
-  local value="$2"
-  local scope="${3:-plugin}" # plugin|global
-
-  if [[ -z "${_LYENV_REQ}" ]]; then
-    echo "lyenv_sdk: call lyenv_read_request() first" >&2
-    return 1
+)"
+  else
+    # no parser: cannot mutate
+    :
   fi
 
   if [[ "$scope" == "global" ]]; then
-    _LYENV_MUT_GLOBAL="$(_lyenv_set_by_path "$_LYENV_MUT_GLOBAL" "$key" "$value")"
+    LYENV_MUT_GLOBAL="$target"
   else
-    _LYENV_MUT_PLUGIN="$(_lyenv_set_by_path "$_LYENV_MUT_PLUGIN" "$key" "$value")"
+    LYENV_MUT_PLUGIN="$target"
   fi
 }
 
-lyenv_respond_ok() {
-  _LYENV_STATUS="ok"
-  _LYENV_MESSAGE="${1:-}"
+ly_respond_ok() {
+  local msg="${1:-}"
+  LYENV_RESP_STATUS="ok"
+  LYENV_RESP_MESSAGE="$msg"
 
-  python3 - "$_LYENV_STATUS" "$_LYENV_MESSAGE" "$_LYENV_MUT_GLOBAL" "$_LYENV_MUT_PLUGIN" <<'PY'
-import sys, json
-status = sys.argv[1]
-msg = sys.argv[2]
-mut_global = json.loads(sys.argv[3])
-mut_plugin = json.loads(sys.argv[4])
-
-# read logs/artifacts from environment (space-joined safely is hard),
-# so we rely on a sentinel JSON built below by bash via heredoc.
-# Here we read from stdin to get logs/artifacts arrays (JSON).
-payload = json.loads(sys.stdin.read() or "{}")
-logs = payload.get("logs", [])
-arts = payload.get("artifacts", [])
-
-resp = {
-  "status": status,
-  "logs": logs,
-  "artifacts": arts,
-  "mutations": {"global": mut_global, "plugin": mut_plugin},
-}
-if msg:
-  resp["message"] = msg
-print(json.dumps(resp, ensure_ascii=False))
-PY <<EOF
-{"logs": $(python3 - <<'P'
-import json
-import os
-# bash passes logs/artifacts via injected placeholders below (replaced in bash)
-P
-), "artifacts": []}
-EOF
+  # build JSON response (use jq if possible)
+  if _has_jq; then
+    local logs_json
+    logs_json="$(printf '%s\n' "${LYENV_RESP_LOGS[@]:-}" | jq -R . | jq -s .)"
+    local art_json
+    art_json="$(printf '%s\n' "${LYENV_RESP_ARTIFACTS[@]:-}" | jq -R . | jq -s .)"
+    jq -n \
+      --arg status "$LYENV_RESP_STATUS" \
+      --arg message "$LYENV_RESP_MESSAGE" \
+      --argjson logs "$logs_json" \
+      --argjson artifacts "$art_json" \
+      --argjson g "$LYENV_MUT_GLOBAL" \
+      --argjson p "$LYENV_MUT_PLUGIN" \
+      '{status:$status,message:$message,logs:$logs,artifacts:$artifacts,mutations:{global:$g,plugin:$p}}'
+  else
+    # fallback: minimal output
+    printf '{"status":"%s","message":"%s","logs":[],"artifacts":[],"mutations":{"global":%s,"plugin":%s}}\n' \
+      "$LYENV_RESP_STATUS" "$LYENV_RESP_MESSAGE" "$LYENV_MUT_GLOBAL" "$LYENV_MUT_PLUGIN"
+  fi
 }
 
-# A simpler, correct responder without the placeholder trick:
-# we just build the whole response in python and pass logs/artifacts as JSON from bash.
-lyenv_respond_ok() {
-  _LYENV_STATUS="ok"
-  _LYENV_MESSAGE="${1:-}"
-
-  # Convert bash arrays to JSON using python3
-  local logs_json artifacts_json
-  logs_json="$(python3 - <<PY
-import json
-print(json.dumps(${_LYENV_LOGS[@]+"${_LYENV_LOGS[@]}"} if False else ${_LYENV_LOGS[@]+"[]"}, ensure_ascii=False))
-PY
-)"
-  artifacts_json="$(python3 - <<'PY'
-import json
-print("[]")
-PY
-)"
-
-  python3 - "$_LYENV_STATUS" "$_LYENV_MESSAGE" "$logs_json" "$artifacts_json" "$_LYENV_MUT_GLOBAL" "$_LYENV_MUT_PLUGIN" <<'PY'
-import sys, json
-status = sys.argv[1]
-msg = sys.argv[2]
-logs = json.loads(sys.argv[3])
-arts = json.loads(sys.argv[4])
-mut_global = json.loads(sys.argv[5])
-mut_plugin = json.loads(sys.argv[6])
-
-resp = {
-  "status": status,
-  "logs": logs,
-  "artifacts": arts,
-  "mutations": {"global": mut_global, "plugin": mut_plugin},
-}
-if msg:
-  resp["message"] = msg
-print(json.dumps(resp, ensure_ascii=False))
-PY
-}
-
-lyenv_respond_error() {
-  _LYENV_STATUS="error"
-  _LYENV_MESSAGE="$1"
-  # Error response (logs ignored for brevity; add if you want)
-  python3 - "$_LYENV_MESSAGE" "$_LYENV_MUT_GLOBAL" "$_LYENV_MUT_PLUGIN" <<'PY'
-import sys, json
-msg = sys.argv[1]
-mut_global = json.loads(sys.argv[2])
-mut_plugin = json.loads(sys.argv[3])
-resp = {
-  "status": "error",
-  "message": msg,
-  "logs": [],
-  "artifacts": [],
-  "mutations": {"global": mut_global, "plugin": mut_plugin},
-}
-print(json.dumps(resp, ensure_ascii=False))
-PY
+ly_respond_error() {
+  local msg="$1"
+  LYENV_RESP_STATUS="error"
+  LYENV_RESP_MESSAGE="$msg"
+  ly_respond_ok "$msg"  # reuse builder
   exit 1
 }

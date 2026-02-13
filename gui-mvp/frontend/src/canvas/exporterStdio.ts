@@ -1,11 +1,14 @@
 // src/canvas/exporterStdio.ts
 // Export as lyenv stdio multi-step plugin.
-// - Data passing via plugin local config using lyenv_sdk.py mutations.
+//
+// - Data passing via plugin local config using flow_sdk.py + lyenv_sdk.py mutations.
 // - Start node: maps CLI args -> Start outputs -> plugin config
 // - Normal nodes: read inputs (wired) from config -> run underlying program -> write outputs to config
 // - End node: reads its inputs -> respond_ok() with message (final output)
 // - Execution order: linear path Start -> ... -> End (exactly 1 outgoing edge per step)
-// - This exporter injects scripts/lyenv_sdk.py, scripts/flow_sdk.py, scripts/flow_wiring.json, and runner scripts.
+// - This exporter injects SDK files from public/sdks:
+//   scripts/lyenv_sdk.py, scripts/lyenv_sdk.sh, scripts/lyenv_sdk.js, scripts/flow_sdk.py
+// - Also injects scripts/flow_wiring.json and runner scripts.
 //
 // All comments in English.
 
@@ -34,23 +37,34 @@ export type Manifest = {
 type FilesOut = { path: string; content: string }[]
 
 const sanitize = (s: string) => (s || '').replace(/[^a-zA-Z0-9_.-]/g, '_')
-const token = (s: string) => (s || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-') || 'task'
+const token = (s: string) =>
+  (s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-+/g, '-') || 'task'
 
 function extByLang(lang?: string) {
   switch ((lang || '').toLowerCase()) {
-    case 'python': return 'py'
-    case 'javascript': return 'js'
-    case 'bash': return 'sh'
-    case 'lua': return 'lua'
-    case 'go': return 'go'
-    default: return 'txt'
+    case 'python':
+      return 'py'
+    case 'javascript':
+      return 'js'
+    case 'bash':
+      return 'sh'
+    case 'lua':
+      return 'lua'
+    case 'go':
+      return 'go'
+    default:
+      return 'txt'
   }
 }
 
 function findStartEnd(nodes: RFNode[], scope: Set<string>) {
-  const inScope = nodes.filter(n => scope.has(n.id))
-  const start = inScope.find(n => (n.data as any)?.kind === 'start')
-  const end = inScope.find(n => (n.data as any)?.kind === 'end')
+  const inScope = nodes.filter((n) => scope.has(n.id))
+  const start = inScope.find((n) => (n.data as any)?.kind === 'start')
+  const end = inScope.find((n) => (n.data as any)?.kind === 'end')
   return { start, end }
 }
 
@@ -88,7 +102,9 @@ function extractLinearOrder(nodes: RFNode[], edges: RFEdge[], scope: Set<string>
 
     const outs = out.get(cur) || []
     if (outs.length !== 1) {
-      throw new Error(`Control node ${cur} must have exactly 1 outgoing edge in Start->End order (found ${outs.length}).`)
+      throw new Error(
+        `Control node ${cur} must have exactly 1 outgoing edge in Start->End order (found ${outs.length}).`
+      )
     }
     cur = outs[0].target as string
   }
@@ -100,7 +116,7 @@ function extractLinearOrder(nodes: RFNode[], edges: RFEdge[], scope: Set<string>
  * Only edges within scope are considered.
  */
 function buildWiring(nodes: RFNode[], edges: RFEdge[], scope: Set<string>) {
-  const nodeById = new Map(nodes.map(n => [n.id, n] as const))
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const))
   const wiring: Record<string, Record<string, { node: string; port: string }>> = {}
 
   for (const e of edges) {
@@ -108,10 +124,10 @@ function buildWiring(nodes: RFNode[], edges: RFEdge[], scope: Set<string>) {
     if (!scope.has(e.source) || !scope.has(e.target)) continue
     const src = nodeById.get(e.source)!
     const dst = nodeById.get(e.target)!
-    const sPorts = ((src.data as RFNodeData)?.ports?.outputs || [])
-    const tPorts = ((dst.data as RFNodeData)?.ports?.inputs || [])
-    const sInfo = sPorts.find(p => p.id === e.sourceHandle) || sPorts[0]
-    const tInfo = tPorts.find(p => p.id === e.targetHandle) || tPorts[0]
+    const sPorts = (src.data as RFNodeData)?.ports?.outputs || []
+    const tPorts = (dst.data as RFNodeData)?.ports?.inputs || []
+    const sInfo = sPorts.find((p) => p.id === e.sourceHandle) || sPorts[0]
+    const tInfo = tPorts.find((p) => p.id === e.targetHandle) || tPorts[0]
     if (!sInfo || !tInfo) continue
 
     wiring[dst.id] = wiring[dst.id] || {}
@@ -120,98 +136,140 @@ function buildWiring(nodes: RFNode[], edges: RFEdge[], scope: Set<string>) {
   return wiring
 }
 
-/** Inject user's lyenv_sdk.py (Python stdio SDK) */
-function makeLyenvSdkPy(): string {
+// -------------------------
+// Public SDK loader (Vite public/)
+// -------------------------
+
+const _sdkCache = new Map<string, string>()
+
+function joinBaseUrl(base: string, rel: string) {
+  // base often like "/" or "/subpath/"
+  const b = base.endsWith('/') ? base : base + '/'
+  const r = rel.startsWith('/') ? rel.slice(1) : rel
+  return b + r
+}
+
+async function loadPublicText(relPath: string, fallback: string): Promise<string> {
+  const base = (import.meta as any).env?.BASE_URL ?? '/'
+  const url = joinBaseUrl(String(base), relPath)
+
+  if (_sdkCache.has(url)) return _sdkCache.get(url) as string
+
+  try {
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const text = await res.text()
+    if (!text || !text.trim()) throw new Error('empty content')
+    _sdkCache.set(url, text)
+    return text
+  } catch {
+    // Offline / missing file: keep export functional
+    _sdkCache.set(url, fallback)
+    return fallback
+  }
+}
+
+// -------------------------
+// Fallback SDKs (minimal; real sources should live in public/sdks/*)
+// -------------------------
+
+function fallbackLyenvSdkPy(): string {
+  // Minimal but robust: read full stdin, config_get, mutate, respond
   return `# -*- coding: utf-8 -*-
 """
-lyenv_sdk.py - Minimal Python SDK for lyenv stdio plugins.
+lyenv_sdk.py - Fallback Python SDK (minimal).
+Prefer using public/sdks/lyenv_sdk.py.
 """
-import sys
-import json
-from typing import Any, Dict, Optional
+import sys, json
+from typing import Any, Dict, Optional, List
 
 _REQUEST: Dict[str, Any] = {}
+_RESPONDED = False
 _RESPONSE: Dict[str, Any] = {
-    "status": "ok",
-    "logs": [],
-    "artifacts": [],
-    "mutations": {
-        "global": {},
-        "plugin": {},
-    }
+  "status":"ok","logs":[],"artifacts":[],"mutations":{"global":{},"plugin":{}}
 }
 
 def read_request() -> Dict[str, Any]:
-    line = sys.stdin.readline()
-    if not line:
+    raw = sys.stdin.read()
+    if not raw or not raw.strip():
         raise RuntimeError("lyenv_sdk: empty stdin")
     global _REQUEST
-    _REQUEST = json.loads(line)
+    _REQUEST = json.loads(raw)
     return _REQUEST
 
-def _ensure_request_loaded():
+def _ensure():
     if not _REQUEST:
         raise RuntimeError("lyenv_sdk: call read_request() first")
 
-def log(msg: str):
+def _get_by_path(obj: Any, dotted: str, default: Any=None) -> Any:
+    if not dotted:
+        return obj
+    cur = obj
+    for p in dotted.split("."):
+        if isinstance(cur, dict) and p in cur:
+            cur = cur[p]
+        else:
+            return default
+    return cur
+
+def config_get(key: str, default: Any=None, scope: str="plugin") -> Any:
+    _ensure()
+    cfg = _REQUEST.get("config") or {}
+    base = cfg.get(scope) or {}
+    return _get_by_path(base, key, default)
+
+def log(msg: Any) -> None:
     _RESPONSE["logs"].append(str(msg))
 
-def emit_artifact(path: str):
+def emit_artifact(path: Any) -> None:
     _RESPONSE["artifacts"].append(str(path))
 
-def _set_by_path(m: Dict[str, Any], dotted: str, val: Any):
+def _set_by_path(m: Dict[str, Any], dotted: str, val: Any) -> None:
     cur = m
     parts = dotted.split(".")
-    for i, p in enumerate(parts):
-        if i == len(parts) - 1:
+    for i,p in enumerate(parts):
+        if i == len(parts)-1:
             cur[p] = val
         else:
-            cur = cur.setdefault(p, {})
+            nxt = cur.get(p)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                cur[p] = nxt
+            cur = nxt
 
-def plugin_write_config(key: str, value: Any, scope: str = "plugin", merge: Optional[str] = None):
-    _ensure_request_loaded()
-    ms = _RESPONSE["mutations"]
-    target = ms["plugin"] if scope == "plugin" else ms["global"]
+def plugin_write_config(key: str, value: Any, scope: str="plugin", merge: Optional[str]=None) -> None:
+    _ensure()
+    target = _RESPONSE["mutations"]["plugin"] if scope=="plugin" else _RESPONSE["mutations"]["global"]
     _set_by_path(target, key, value)
 
-def respond_ok(message: str = ""):
-    if message:
-        _RESPONSE["message"] = message
+def respond_ok(message: str="") -> None:
+    global _RESPONDED
+    if _RESPONDED:
+        raise RuntimeError("lyenv_sdk: respond called twice")
+    _RESPONDED = True
+    if message and str(message).strip():
+        _RESPONSE["message"] = str(message)
     sys.stdout.write(json.dumps(_RESPONSE, ensure_ascii=False) + "\\n")
     sys.stdout.flush()
 
-def respond_error(message: str):
+def respond_error(message: str) -> None:
+    global _RESPONDED
+    if _RESPONDED:
+        raise RuntimeError("lyenv_sdk: respond called twice")
+    _RESPONDED = True
     _RESPONSE["status"] = "error"
-    _RESPONSE["message"] = message
+    _RESPONSE["message"] = str(message)
     sys.stdout.write(json.dumps(_RESPONSE, ensure_ascii=False) + "\\n")
     sys.stdout.flush()
-    sys.exit(1)
+    raise SystemExit(1)
 `
 }
 
-/**
- * Flow SDK built on top of lyenv_sdk.py.
- * Storage convention:
- *   plugin config path: flow.outputs.<node_id>.<port_name> = "<string>"
- * Read convention:
- *   request contains merged plugin config; we try:
- *     req["config"]["plugin"]  (preferred)
- *     req["plugin_config"]
- *     req["plugin"]
- */
-function makeFlowSdkPy(): string {
+function fallbackFlowSdkPy(): string {
   return `# -*- coding: utf-8 -*-
-\"\"\"flow_sdk.py - Flow helper using lyenv_sdk plugin mutations.
-
-Conventions:
-  - Write outputs to plugin config:
-      flow.outputs.<node_id>.<port> = "<string>"
-  - Read inputs from plugin config based on wiring map.
-
-Start node:
-  - is_source=True, inputs are CLI args mapped by Start output port order.
+\"\"\"flow_sdk.py - Fallback flow helper.
+Prefer using public/sdks/flow_sdk.py.
 \"\"\"
-
 import json
 from typing import Any, Dict, List
 from lyenv_sdk import plugin_write_config
@@ -263,6 +321,41 @@ def write_outputs(node_id: str, output_ports: List[str], values: List[str]):
 `
 }
 
+function fallbackLyenvSdkSh(): string {
+  // Minimal stub: respond ok/error with empty logs/mutations.
+  // Prefer using public/sdks/lyenv_sdk.sh.
+  return `#!/usr/bin/env bash
+set -euo pipefail
+# Fallback lyenv_sdk.sh (minimal). Prefer public/sdks/lyenv_sdk.sh.
+
+LYENV_REQ_JSON=""
+ly_read_request(){ LYENV_REQ_JSON="$(cat)"; [[ -n "\${LYENV_REQ_JSON//[[:space:]]/}" ]] || { echo "lyenv_sdk: empty stdin" >&2; return 1; }; }
+ly_log(){ :; }
+ly_emit_artifact(){ :; }
+ly_mutate_set(){ :; }
+ly_respond_ok(){ printf '{"status":"ok","logs":[],"artifacts":[],"mutations":{"global":{},"plugin":{}}}\\n'; }
+ly_respond_error(){ printf '{"status":"error","message":"%s","logs":[],"artifacts":[],"mutations":{"global":{},"plugin":{}}}\\n' "\${1:-error}"; exit 1; }
+`
+}
+
+function fallbackLyenvSdkJs(): string {
+  // Minimal stub: read stdin JSON and respond.
+  // Prefer using public/sdks/lyenv_sdk.js.
+  return `// Fallback lyenv_sdk.js (minimal). Prefer public/sdks/lyenv_sdk.js.
+let REQUEST=null;
+const RESPONSE={status:"ok",logs:[],artifacts:[],mutations:{global:{},plugin:{}}};
+function readAllStdin(){return new Promise(r=>{let d="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>r(d));});}
+async function read_request(){const raw=await readAllStdin(); if(!raw||!raw.trim()) throw new Error("lyenv_sdk: empty stdin"); REQUEST=JSON.parse(raw); return REQUEST;}
+function respond_ok(message=""){ if(message&&message.trim()) RESPONSE.message=message; process.stdout.write(JSON.stringify(RESPONSE)+"\\n"); }
+function respond_error(message="error"){ RESPONSE.status="error"; RESPONSE.message=String(message); process.stdout.write(JSON.stringify(RESPONSE)+"\\n"); process.exit(1); }
+module.exports={read_request,respond_ok,respond_error};
+`
+}
+
+// -------------------------
+// Runner templates
+// -------------------------
+
 /** Runner for Start node: map CLI args -> Start output ports -> config */
 function makeStartRunnerPy(startId: string, outPorts: string[]): string {
   const outJson = JSON.stringify(outPorts)
@@ -278,9 +371,9 @@ def main():
     try:
         req = read_request()
         args = [str(x) for x in (req.get("args") or [])]
-        # Map args by Start output port order
         write_outputs(START_ID, OUT_PORTS, args)
-        respond_ok("ok")
+        # keep empty message to reduce console noise
+        respond_ok("")
     except Exception as e:
         respond_error(str(e))
 
@@ -305,7 +398,6 @@ def main():
         req = read_request()
         wiring = load_wiring("./scripts/flow_wiring.json")
         vals = build_inputs(req, wiring, END_ID, IN_PORTS)
-        # Compose a human-friendly message; also log structured values
         msg = " ".join(vals).strip()
         log({ "end_inputs": dict(zip(IN_PORTS, vals)) })
         respond_ok(msg)
@@ -317,7 +409,7 @@ if __name__ == "__main__":
 `
 }
 
-/** Runner for normal node: read inputs from config -> run underlying program -> write outputs -> respond_ok */
+/** Runner for normal node: read inputs -> run underlying program -> write outputs -> respond_ok */
 function makeNodeRunnerPy(
   nodeId: string,
   label: string,
@@ -374,7 +466,8 @@ def main():
 
         outs = split_outputs(p.stdout, len(OUTPUT_PORTS))
         write_outputs(NODE_ID, OUTPUT_PORTS, outs)
-        respond_ok("ok")
+        # keep empty message to reduce console noise
+        respond_ok("")
     except Exception as e:
         respond_error(str(e))
 
@@ -383,14 +476,17 @@ if __name__ == "__main__":
 `
 }
 
-/** Main export (async for future injections; currently pure build) */
+// -------------------------
+// Export main
+// -------------------------
+
+/** Main export (async so we can fetch SDKs from public/) */
 export async function buildManifestAndFilesStdio(
   allNodes: RFNode[],
   allEdges: RFEdge[],
   pluginName: string,
   shim: string
 ): Promise<{ manifest: Manifest; files: FilesOut }> {
-
   const manifest: Manifest = {
     name: pluginName,
     version: '0.1.0',
@@ -400,23 +496,39 @@ export async function buildManifestAndFilesStdio(
   }
 
   const files: FilesOut = []
-  files.push({ path: 'config.yaml', content: '# default config for the plugin\nflow:\n  outputs: {}\n' })
-  files.push({ path: 'scripts/lyenv_sdk.py', content: makeLyenvSdkPy() })
-  files.push({ path: 'scripts/flow_sdk.py', content: makeFlowSdkPy() })
 
-  const nodeById = new Map(allNodes.map(n => [n.id, n] as const))
+  // Default plugin config
+  files.push({
+    path: 'config.yaml',
+    content: '# default config for the plugin\nflow:\n  outputs: {}\n',
+  })
+
+  // Load SDKs from public/sdks (fallback to embedded stubs if missing)
+  const sdkPy = await loadPublicText('sdks/lyenv_sdk.py', fallbackLyenvSdkPy())
+  const sdkSh = await loadPublicText('sdks/lyenv_sdk.sh', fallbackLyenvSdkSh())
+  const sdkJs = await loadPublicText('sdks/lyenv_sdk.js', fallbackLyenvSdkJs())
+  const flowPy = await loadPublicText('sdks/flow_sdk.py', fallbackFlowSdkPy())
+
+  files.push({ path: 'scripts/lyenv_sdk.py', content: sdkPy })
+  files.push({ path: 'scripts/lyenv_sdk.sh', content: sdkSh })
+  files.push({ path: 'scripts/lyenv_sdk.js', content: sdkJs })
+  files.push({ path: 'scripts/flow_sdk.py', content: flowPy })
+
+  const nodeById = new Map(allNodes.map((n) => [n.id, n] as const))
 
   // Build scopes: per group or whole canvas
-  const groups = allNodes.filter(n => n.type === 'group')
+  const groups = allNodes.filter((n) => n.type === 'group')
   const scopes: Array<{ cmdName: string; scope: Set<string> }> = []
 
   if (!groups.length) {
-    const ids = allNodes.filter(n => n.type !== 'group').map(n => n.id)
+    const ids = allNodes.filter((n) => n.type !== 'group').map((n) => n.id)
     scopes.push({ cmdName: 'run', scope: new Set(ids) })
   } else {
     for (const g of groups) {
       const cmdName = token(((g.data as any)?.label) || g.id)
-      const kids = allNodes.filter(n => (n as any).parentId === g.id && n.type !== 'group').map(n => n.id)
+      const kids = allNodes
+        .filter((n) => (n as any).parentId === g.id && n.type !== 'group')
+        .map((n) => n.id)
       if (!kids.length) continue
       scopes.push({ cmdName, scope: new Set(kids) })
     }
@@ -425,15 +537,17 @@ export async function buildManifestAndFilesStdio(
   for (const s of scopes) {
     const order = extractLinearOrder(allNodes, allEdges, s.scope)
     const wiring = buildWiring(allNodes, allEdges, s.scope)
+
+    // One wiring file per command scope (same path; overwritten each loop)
     files.push({ path: 'scripts/flow_wiring.json', content: JSON.stringify(wiring, null, 2) + '\n' })
 
     const { start, end } = findStartEnd(allNodes, s.scope)
     if (!start || !end) throw new Error('Start/End missing in scope.')
 
-    const startOutPorts = ((start.data as RFNodeData)?.ports?.outputs || []).map(p => p.name || p.id)
-    const endInPorts = ((end.data as RFNodeData)?.ports?.inputs || []).map(p => p.name || p.id)
+    const startOutPorts = ((start.data as RFNodeData)?.ports?.outputs || []).map((p) => p.name || p.id)
+    const endInPorts = ((end.data as RFNodeData)?.ports?.inputs || []).map((p) => p.name || p.id)
 
-    // Inject start/end runners
+    // Inject start/end runners (always same paths; overwritten each loop)
     files.push({ path: 'scripts/start_runner.py', content: makeStartRunnerPy(start.id, startOutPorts) })
     files.push({ path: 'scripts/end_runner.py', content: makeEndRunnerPy(end.id, endInPorts) })
 
@@ -443,12 +557,12 @@ export async function buildManifestAndFilesStdio(
     for (const nid of order) {
       const n = nodeById.get(nid)!
       const d = (n.data || {}) as RFNodeData
-      const kind = (d.kind || 'code') as string
+      const kind = String((d as any).kind || 'code')
 
       if (kind === 'start' || kind === 'end') continue
 
-      const inputPorts = (d.ports?.inputs || []).map(p => p.name || p.id)
-      const outputPorts = (d.ports?.outputs || []).map(p => p.name || p.id)
+      const inputPorts = (d.ports?.inputs || []).map((p) => p.name || p.id)
+      const outputPorts = (d.ports?.outputs || []).map((p) => p.name || p.id)
 
       let program = ''
       let fixedArgs: string[] = []
@@ -480,7 +594,10 @@ export async function buildManifestAndFilesStdio(
       }
 
       const runnerPath = `scripts/runner_${sanitize(nid)}.py`
-      files.push({ path: runnerPath, content: makeNodeRunnerPy(nid, String(d.label || nid), inputPorts, outputPorts, program, fixedArgs) })
+      files.push({
+        path: runnerPath,
+        content: makeNodeRunnerPy(nid, String((d as any).label || nid), inputPorts, outputPorts, program, fixedArgs),
+      })
       steps.push({ executor: 'stdio', program: `./${runnerPath}`, workdir: '.', use_stdio: true })
     }
 
