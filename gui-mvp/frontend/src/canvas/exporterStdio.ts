@@ -318,10 +318,21 @@ if __name__ == "__main__":
 }
 
 /** Runner for normal node: read inputs from config -> run underlying program -> write outputs -> respond_ok */
-function makeNodeRunnerPy(nodeId: string, label: string, inputPorts: string[], outputPorts: string[], program: string, fixedArgs: string[]): string {
+function makeNodeRunnerPy(
+  nodeId: string,
+  label: string,
+  inputPorts: string[],
+  outputPorts: string[],
+  program: string,
+  fixedArgs: string[]
+): string {
+  const progLower = (program || '').toLowerCase()
+  const isPython = progLower === 'python' || progLower === 'python3' || progLower === 'py'
+
   return `# -*- coding: utf-8 -*-
 # runner_${sanitize(nodeId)}.py - stdio runner for node "${label}"
 import subprocess
+import sys
 from typing import List
 from lyenv_sdk import read_request, log, respond_ok, respond_error
 from flow_sdk import load_wiring, build_inputs, write_outputs
@@ -329,7 +340,7 @@ from flow_sdk import load_wiring, build_inputs, write_outputs
 NODE_ID = ${JSON.stringify(nodeId)}
 INPUT_PORTS = ${JSON.stringify(inputPorts)}
 OUTPUT_PORTS = ${JSON.stringify(outputPorts)}
-PROGRAM = ${JSON.stringify(program)}
+PROGRAM = ${isPython ? "sys.executable" : JSON.stringify(program)}
 FIXED_ARGS = ${JSON.stringify(fixedArgs)}
 
 def split_outputs(s: str, out_count: int) -> List[str]:
@@ -345,14 +356,20 @@ def main():
         argv = build_inputs(req, wiring, NODE_ID, INPUT_PORTS)
 
         cmd = [PROGRAM] + list(FIXED_ARGS) + argv
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True)
+        except Exception as e:
+            respond_error(f"node failed: {NODE_ID}: {e}")
+            return
 
         if p.stderr:
-            # keep stderr in logs for debugging
             log(p.stderr.strip())
 
         if p.returncode != 0:
-            respond_error(f"node failed: {NODE_ID}")
+            msg = (p.stderr or "").strip()
+            if msg:
+                msg = msg[:400]
+            respond_error(f"node failed: {NODE_ID}: rc={p.returncode} {msg}")
             return
 
         outs = split_outputs(p.stdout, len(OUTPUT_PORTS))
