@@ -1,100 +1,127 @@
 [
   {
-    "key": "bash",
+    "key": "sdk_dump_request_py",
+    "label": "SDK: Dump Request (Python)",
+    "color": "#8b5cf6",
+    "category": "SDK",
+    "description": "Print action/args/paths/system + a small config preview (Python)",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "from lyenv_sdk import read_request, log, respond_ok, action, args, paths, system, config_plugin, config_global\n\nreq = read_request()\nlog(f\"action={action()}\")\nlog(f\"args={args()}\")\nlog(f\"paths={paths()}\")\nlog(f\"system={system()}\")\nlog(f\"plugin.driver.name={config_plugin('driver.name','')} \")\nlog(f\"global.env.name={config_global('env.name','')} \")\nrespond_ok('')\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "out", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_read_config_py",
+    "label": "SDK: Read Config (Python)",
+    "color": "#6366f1",
+    "category": "Config",
+    "description": "Read plugin/global config by dotted key (Python). Inputs: scope, key, default → value",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "from lyenv_sdk import read_request, respond_ok, config_get\n\nreq = read_request()\n# Convention: argv comes from wiring; use req['args'] only if you want CLI args.\n# Here we read from plugin/global config by dotted path.\n\n# For GUI flows, inputs come from wiring into argv; use flow_sdk for wiring. This node is a simple SDK demo.\n# We'll read these values from CLI args for quick testing:\n#   arg0=scope (plugin/global)\n#   arg1=key\n#   arg2=default(optional)\n\nscope = (req.get('args') or ['plugin'])[0]\nkey = (req.get('args') or ['plugin',''])[1] if len(req.get('args') or [])>1 else ''\ndefv = (req.get('args') or ['','',''])[2] if len(req.get('args') or [])>2 else ''\n\nval = config_get(key, defv, scope=scope)\nrespond_ok(str(val) if val is not None else '')\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "value", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_write_mutation_plugin_py",
+    "label": "SDK: Mutate Plugin Config (Python)",
+    "color": "#10b981",
+    "category": "Config",
+    "description": "Write plugin mutation by dotted key. Uses response.mutations.plugin (Python)",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "from lyenv_sdk import read_request, respond_ok, mutate, log\n\nreq = read_request()\n# Quick test via CLI args: key value\nargs = req.get('args') or []\nkey = args[0] if len(args)>0 else 'demo.hello.enabled'\nval = args[1] if len(args)>1 else 'true'\n\nmutate(key, val, scope='plugin')\nlog(f\"mutate plugin: {key}={val}\")\nrespond_ok('')\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "ok", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_write_mutation_global_py",
+    "label": "SDK: Mutate Global Config (Python)",
+    "color": "#22c55e",
+    "category": "Config",
+    "description": "Write global mutation by dotted key. Uses response.mutations.global (Python)",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "import time\nfrom lyenv_sdk import read_request, respond_ok, mutate, log\n\nreq = read_request()\nkey = 'demo.last_run_at'\nval = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())\n\nmutate(key, val, scope='global')\nlog(f\"mutate global: {key}={val}\")\nrespond_ok('')\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "ok", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_emit_artifact_py",
+    "label": "SDK: Emit Artifact (Python)",
+    "color": "#0ea5e9",
+    "category": "Artifacts",
+    "description": "Append an artifact path into response.artifacts (Python)",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "from lyenv_sdk import read_request, respond_ok, emit_artifact, get_path, log\n\nreq = read_request()\nws = get_path('workspace','')\n# Example artifact path under workspace\nout = (ws + '/out/demo.txt') if ws else 'out/demo.txt'\nemit_artifact(out)\nlog(f\"artifact={out}\")\nrespond_ok('')\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "artifact", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_selftest_py",
+    "label": "SDK Self-Test (Python)",
+    "color": "#8b5cf6",
+    "category": "SDK",
+    "description": "Verify scripts/lyenv_sdk.py is injected and importable (Python)",
+    "template": {
+      "kind": "code",
+      "language": "python",
+      "source": "from lyenv_sdk import read_request, respond_ok, log\n\nreq = read_request()\nlog('sdk_py_ok')\nrespond_ok('')\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "out", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_selftest_sh",
+    "label": "SDK Self-Test (Bash)",
+    "color": "#0ea5e9",
+    "category": "SDK",
+    "description": "Verify scripts/lyenv_sdk.sh is injected and source-able (Bash). Requires bash in PATH.",
+    "template": {
+      "kind": "code",
+      "language": "bash",
+      "source": "#!/usr/bin/env bash\nset -euo pipefail\n# SDK is injected under scripts/\nsource ./scripts/lyenv_sdk.sh\nly_read_request\nly_log \"sdk_sh_ok\"\nly_respond_ok \"\"\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "out", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "sdk_selftest_node",
+    "label": "SDK Self-Test (Node)",
+    "color": "#22c55e",
+    "category": "SDK",
+    "description": "Verify scripts/lyenv_sdk.js is injected and require-able (Node.js)",
+    "template": {
+      "kind": "code",
+      "language": "javascript",
+      "source": "#!/usr/bin/env node\nconst sdk = require('./lyenv_sdk.js');\n\nasync function main() {\n  await sdk.read_request();\n  sdk.log('sdk_js_ok');\n  sdk.respond_ok('');\n}\n\nmain().catch((err) => {\n  try { sdk.respond_error(err.message || String(err)); }\n  catch { process.stderr.write(String(err) + '\\n'); process.exit(1); }\n});\n",
+      "ports": { "inputs": [], "outputs": [ { "name": "out", "dtype": "text" } ] }
+    }
+  },
+  {
+    "key": "bash_run",
     "label": "Run Bash Command",
     "color": "#0ea5e9",
     "category": "Shell",
-    "description": "Execute a bash command (e.g., bash -lc \"echo hi\")",
+    "description": "Execute a bash command (bash -lc \"...\"). Windows requires bash in PATH (e.g., Git-Bash).",
     "template": {
       "kind": "command",
       "command": "bash",
-      "args": [
-        "-lc",
-        "echo hello"
-      ],
+      "args": [ "-lc", "echo hello" ],
       "cwd": ".",
       "ports": {
-        "inputs": [
-          {
-            "name": "in",
-            "dtype": "any"
-          }
-        ],
-        "outputs": [
-          {
-            "name": "out",
-            "dtype": "any"
-          }
-        ]
+        "inputs": [ { "name": "in", "dtype": "any" } ],
+        "outputs": [ { "name": "out", "dtype": "any" } ]
       }
     }
   },
   {
-    "key": "config_write",
-    "label": "Write Config (JSON)",
-    "color": "#10b981",
-    "category": "Config",
-    "description": "Write/update JSON file: file + key + value → ok",
-    "template": {
-      "kind": "code",
-      "language": "python",
-      "source": "#!/usr/bin/env bash\n# Demo stdio command: read request, write one-line mutations via SDK.\nset -euo pipefail\n\n# Ensure we can source sdk from current dir\n# configure.sh and lyenv_sdk.sh should be in the same folder\nsource ./lyenv_sdk.sh\n\nmain() {\n  lyenv_read_request\n\n  # plugin local config\n  lyenv_plugin_write_config 'hello.enabled' 'true' 'plugin'\n\n  # global config\n  # Use UTC ISO8601\n  ts='$(date -u +'%Y-%m-%dT%H:%M:%SZ')'\n  lyenv_plugin_write_config 'demo.last_run_at' '$ts' 'global'\n\n  # simple log (we do not parse req in bash demo)\n  lyenv_log 'bash: configured at $ts'\n\n  lyenv_respond_ok 'ok'\n}\n\nmain\n",
-      "ports": {
-        "inputs": [
-          {
-            "name": "file",
-            "dtype": "text"
-          },
-          {
-            "name": "key",
-            "dtype": "text"
-          },
-          {
-            "name": "value",
-            "dtype": "text"
-          }
-        ],
-        "outputs": [
-          {
-            "name": "ok",
-            "dtype": "text"
-          }
-        ]
-      }
-    }
-  },
-  {
-    "key": "config_read",
-    "label": "Read Config (JSON)",
-    "color": "#06b6d4",
-    "category": "Config",
-    "description": "Read JSON file: file + key → value",
-    "template": {
-      "kind": "code",
-      "language": "python",
-      "source": "# Read JSON config: inputs (file, key) -> value\nfrom sys import argv\n# argv[1]=file argv[2]=key\nimport json, os\np=argv[1]; k=argv[2]\ntry:\n  with open(p,'r',encoding='utf-8') as f: cfg=json.load(f) or {}\n  print(str(cfg.get(k,'') if isinstance(cfg,dict) else ''))\nexcept:\n  print('')\n",
-      "ports": {
-        "inputs": [
-          {
-            "name": "file",
-            "dtype": "text"
-          },
-          {
-            "name": "key",
-            "dtype": "text"
-          }
-        ],
-        "outputs": [
-          {
-            "name": "value",
-            "dtype": "text"
-          }
-        ]
-      }
-    }
-  },
-  {
-    "key": "code",
+    "key": "python_code",
     "label": "Code (Python)",
     "color": "#4f46e5",
     "category": "General",
@@ -102,83 +129,26 @@
     "template": {
       "kind": "code",
       "language": "python",
-      "source": "from sys import argv\nprint(' '.join(argv[1:]))\n",
+      "source": "from lyenv_sdk import read_request, respond_ok\nreq = read_request()\nrespond_ok(' '.join([str(x) for x in (req.get('args') or [])]))\n",
       "ports": {
-        "inputs": [
-          {
-            "name": "in",
-            "dtype": "any"
-          }
-        ],
-        "outputs": [
-          {
-            "name": "out",
-            "dtype": "any"
-          }
-        ]
+        "inputs": [ { "name": "in", "dtype": "any" } ],
+        "outputs": [ { "name": "out", "dtype": "any" } ]
       }
     }
   },
   {
-    "key": "sdk_test_python",
-    "label": "SDK Self-Test (Python)",
-    "color": "#8b5cf6",
-    "category": "General",
-    "description": "Verify scripts/lyenv_sdk.py is injected and importable",
-    "template": {
-      "kind": "code",
-      "language": "python",
-      "source": "#!/usr/bin/env python3\n# Demo stdio command: read request, write one-line mutations via SDK.\nimport time\nfrom lyenv_sdk import read_request, log, plugin_write_config, respond_ok\n\ndef main():\n    req = read_request()\n    # one-liner: write plugin local config\n    plugin_write_config('hello.enabled', True, scope='plugin')\n    # write global config\n    plugin_write_config('demo.last_run_at', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), scope='global')\n    log(f'os={req.get('system',{})}')\n    respond_ok('ok')\n\nif __name__ == '__main__':\n    main()\n",
-      "ports": {
-        "inputs": [],
-        "outputs": [
-          {
-            "name": "out",
-            "dtype": "text"
-          }
-        ]
-      }
-    }
-  },
-  {
-    "key": "sdk_test_bash",
-    "label": "SDK Self-Test (Bash)",
-    "color": "#0ea5e9",
-    "category": "Shell",
-    "description": "Verify scripts/lyenv_sdk.sh is injected and source-able",
-    "template": {
-      "kind": "code",
-      "language": "bash",
-      "source": "#!/usr/bin/env bash\nset -euo pipefail\n# injected file should exist\nsource ./scripts/lyenv_sdk.sh\nprintf \"sdk_sh_ok\\n\"\n",
-      "ports": {
-        "inputs": [],
-        "outputs": [
-          {
-            "name": "out",
-            "dtype": "text"
-          }
-        ]
-      }
-    }
-  },
-  {
-    "key": "sdk_test_node",
-    "label": "SDK Self-Test (Node)",
+    "key": "node_code",
+    "label": "Code (Node.js)",
     "color": "#22c55e",
     "category": "General",
-    "description": "Verify scripts/lyenv_sdk.js is injected and require-able",
+    "description": "Generic Node.js node you can edit freely",
     "template": {
       "kind": "code",
       "language": "javascript",
-      "source": "#!/usr/bin/env node\n// Demo stdio command: read request, write one-line mutations via SDK.\n\nconst sdk = require('./lyenv_sdk.js');\n\nasync function main() {\n  const req = await sdk.read_request();\n\n  sdk.plugin_write_config('hello.enabled', true, 'plugin');\n  sdk.plugin_write_config('demo.last_run_at', new Date().toISOString(), 'global');\n  sdk.log(`os=${JSON.stringify(req.system || {})}`);\n\n  sdk.respond_ok('ok');\n}\n\nmain().catch((err) => {\n  try {\n    sdk.respond_error(err.message || String(err));\n  } catch {\n    process.stderr.write(String(err) + '\n');\n    process.exit(1);\n  }\n});\n",
+      "source": "#!/usr/bin/env node\nconst sdk = require('./lyenv_sdk.js');\n\nasync function main(){\n  const req = await sdk.read_request();\n  sdk.respond_ok((req.args||[]).join(' '));\n}\nmain().catch(e=>sdk.respond_error(e.message||String(e)));\n",
       "ports": {
-        "inputs": [],
-        "outputs": [
-          {
-            "name": "out",
-            "dtype": "text"
-          }
-        ]
+        "inputs": [ { "name": "in", "dtype": "any" } ],
+        "outputs": [ { "name": "out", "dtype": "any" } ]
       }
     }
   }
