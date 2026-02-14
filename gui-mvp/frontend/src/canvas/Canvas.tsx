@@ -43,6 +43,9 @@ import useGroupActions from './hooks/useGroupActions'
 import useHistoryHotkeys from './hooks/useHistoryHotkeys'
 import { buildManifestAndFilesStdio } from './exporterStdio'
 
+import ExportProfileEditor from '../components/ExportProfileEditor'
+
+
 export type CanvasHandle = {
   addNodeAtCenter: () => void
   autoLayout: () => void
@@ -130,12 +133,38 @@ const Canvas = forwardRef<CanvasHandle>(function Canvas(_, ref) {
     </ReactFlowProvider>
   )
 })
+
+type ExportProfile = {
+  pluginName: string
+  version: string
+  expose: string[]          // shims list
+  localConfigFile: string   // manifest.config.local_file
+  configYaml: string        // content of config.yaml
+  readmeTitle?: string
+  readmeBody?: string
+}
+
+const EXPORT_PROFILE_KEY = 'lyenv-export-profile'
+
+const DEFAULT_EXPORT_PROFILE: ExportProfile = {
+  pluginName: 'myplugin',
+  version: '0.1.0',
+  expose: ['myplugin'],
+  localConfigFile: './config.yaml',
+  configYaml: '# default config for the plugin\nflow:\n  outputs: {}\n',
+  readmeTitle: '',
+  readmeBody: '',
+}
+
 export default Canvas
 
 const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdgeType>([])
   const rf = useReactFlow<RFNodeType, RFEdgeType>()
+
+  const [exportProfileOpen, setExportProfileOpen] = useState(false)
+  const [exportProfile, setExportProfile] = useState<ExportProfile>(DEFAULT_EXPORT_PROFILE)
 
   // refs for deterministic nextState commits
   const nodesRef = useRef<RFNodeType[]>([])
@@ -158,7 +187,7 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   const [editorNodeId, setEditorNodeId] = useState<string | undefined>(undefined)
   const [dataEditorOpen, setDataEditorOpen] = useState(false)
   const [dataEditorNodeId, setDataEditorNodeId] = useState<string | undefined>(undefined)
-  const isModalOpen = editorOpen || dataEditorOpen
+  const isModalOpen = editorOpen || dataEditorOpen || exportProfileOpen
 
   const editorInitial: RFNodeData | undefined = useMemo(() => {
     if (!editorNodeId) return undefined
@@ -422,6 +451,25 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
     } catch { message.error('Load failed') }
   }, [setNodes, setEdges, commitSnapshotState, rf])
 
+  // load once
+  useEffect(() => {
+    const raw = localStorage.getItem(EXPORT_PROFILE_KEY)
+    if (!raw) return
+    try {
+      const p = JSON.parse(raw) as Partial<ExportProfile>
+      setExportProfile(prev => ({
+        ...prev,
+        ...p,
+        expose: Array.isArray(p.expose) && p.expose.length ? p.expose : prev.expose,
+      }))
+    } catch { /* ignore */ }
+  }, [])
+
+  const saveExportProfile = useCallback((p: ExportProfile) => {
+    setExportProfile(p)
+    localStorage.setItem(EXPORT_PROFILE_KEY, JSON.stringify(p))
+  }, [])
+
   const fitView = useCallback(() => rf.fitView({ padding: 0.1 }), [rf])
 
   /** export/import flow json */
@@ -453,29 +501,49 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   }, [setNodes, setEdges, commitSnapshotState, rf])
 
   /** Export LyEnv zip (stdio flow) */
-  const exportLyenvAsZip = useCallback(async () => {
+  const exportLyenvAsZip = useCallback(async (profileOverride?: ExportProfile) => {
     try {
-      const pluginName = prompt('LyEnv plugin name:', 'myplugin') || 'myplugin'
-      const shim = prompt('Shim alias to expose:', 'myplugin') || 'myplugin'
+      const p = profileOverride || exportProfile
+      const pluginName = (p.pluginName || '').trim()
+      const version = (p.version || '0.1.0').trim()
+      const expose = Array.isArray(p.expose) && p.expose.length ? p.expose : [pluginName || 'myplugin']
+
+      if (!pluginName) {
+        message.warning('Please set plugin name in Export Settings first.')
+        setExportProfileOpen(true)
+        return
+      }
+
       const { manifest, files } = await buildManifestAndFilesStdio(
         rf.getNodes() as RFNodeType[],
         rf.getEdges() as RFEdgeType[],
-        pluginName,
-        shim
+        {
+          pluginName,
+          version,
+          expose,
+          localConfigFile: p.localConfigFile || './config.yaml',
+          configYaml: p.configYaml || '# default config\nflow:\n  outputs: {}\n',
+          readmeTitle: p.readmeTitle || '',
+          readmeBody: p.readmeBody || '',
+        }
       )
+
       const zip = new JSZip()
       zip.file('manifest.yaml', yaml.dump(manifest))
       for (const f of files) zip.file(f.path, f.content)
       const blob = await zip.generateAsync({ type: 'blob' })
       const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob); a.download = `${manifest.name}.lyenv.zip`; a.click()
+      a.href = URL.createObjectURL(blob)
+      a.download = `${manifest.name}-${manifest.version}.lyenv.zip`
+      a.click()
       URL.revokeObjectURL(a.href)
       message.success('Exported LyEnv (stdio flow)')
     } catch (err: any) {
       console.error(err)
       message.error(err?.message || 'Export failed')
     }
-  }, [rf])
+  }, [rf, exportProfile])
+
 
   /** Context menu */
   const [menu, setMenu] = useState<{ visible: boolean; x: number; y: number; type: 'pane' | 'node'; nodeId?: string }>({
@@ -575,6 +643,7 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
           const pos = pointerFlowPosRef.current ?? screenToFlow(window.innerWidth / 2, window.innerHeight / 2)
           createNodeFromTemplate(item, pos)
         }}
+        onOpenExportProfile={() => setExportProfileOpen(true)}
       />
 
       <div
@@ -704,6 +773,18 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
             setDataEditorNodeId(undefined)
           }}
         />
+        <ExportProfileEditor
+          open={exportProfileOpen}
+          value={exportProfile}
+          onCancel={() => setExportProfileOpen(false)}
+          onSave={(p) => saveExportProfile(p)}
+          onSaveAndExport={(p) => {
+            saveExportProfile(p)
+            setExportProfileOpen(false)
+            exportLyenvAsZip(p)
+          }}
+        />
+
       </div>
 
       <Drawer title="Canvas Settings" placement="right" width={320} open={settingsOpen} onClose={() => setSettingsOpen(false)}>
