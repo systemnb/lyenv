@@ -481,7 +481,6 @@ if __name__ == "__main__":
 `
 }
 
-
 /** Runner for normal node: read inputs -> run underlying program -> write outputs -> respond_ok */
 function makeNodeRunnerPy(
   nodeId: string,
@@ -518,7 +517,7 @@ def _parse_outputs(stdout_text: str, out_count: int) -> List[str]:
     Output parsing strategy:
     1) If stdout is JSON array: ["a","b",...], map by index (recommended)
     2) Else if out_count == 1: return raw text
-    3) Else fallback: split() tokens (last resort; unsafe for spaces)
+    3) Else fallback: split() tokens (last resort)
     """
     s = (stdout_text or "").strip()
     if out_count <= 0:
@@ -551,7 +550,7 @@ def main():
         wiring = load_wiring("./scripts/flow_wiring.json")
 
         argv = get_inputs(req, wiring, NODE_ID, INPUT_PORTS, default="")
-        # Debug dump inputs/outputs (outputs read from stored flow.outputs)
+        # Great for GUI debugging: shows resolved inputs and current stored outputs (if any)
         debug_dump_io(req, wiring, NODE_ID, INPUT_PORTS, OUTPUT_PORTS)
 
         cmd = [PROGRAM] + list(FIXED_ARGS) + argv
@@ -581,7 +580,7 @@ def main():
         # Write outputs back to flow bus (mutations.plugin)
         set_outputs(NODE_ID, dict(zip(OUTPUT_PORTS, outs)))
 
-        # Debug outputs for this step
+        # Extra debug
         log({ "node": NODE_ID, "outputs": dict(zip(OUTPUT_PORTS, outs)) })
 
         respond_ok("")
@@ -592,7 +591,6 @@ if __name__ == "__main__":
     main()
 `
 }
-
 
 
 // -------------------------

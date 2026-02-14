@@ -18,6 +18,16 @@ import type {
   EdgeChange,
 } from '@xyflow/react'
 
+function deepClone<T>(v: T): T {
+  // structuredClone is supported in modern browsers
+  // Fallback to JSON clone for plain data objects
+  try {
+    // @ts-ignore
+    if (typeof structuredClone === 'function') return structuredClone(v)
+  } catch {}
+  return JSON.parse(JSON.stringify(v))
+}
+
 function isTextInput(el: Element | null) {
   if (!el) return false
   const tag = el.tagName?.toLowerCase?.() || ''
@@ -83,8 +93,8 @@ export default function useHistoryHotkeys<N extends RFNode = RFNode, E extends R
   const pushFromRF = useCallback(() => {
     if (suspendRef.current) return
     historyRef.current.push({
-      nodes: rf.getNodes() as N[],
-      edges: rf.getEdges() as E[],
+      nodes: deepClone(rf.getNodes() as N[]),
+      edges: deepClone(rf.getEdges() as E[]),
     })
     if (historyRef.current.length > 200) historyRef.current.shift()
     redoRef.current = []
@@ -93,7 +103,10 @@ export default function useHistoryHotkeys<N extends RFNode = RFNode, E extends R
   /** Push snapshot from provided state (programmatic commits) */
   const commitSnapshotState = useCallback((nodes: N[], edges: E[]) => {
     if (suspendRef.current) return
-    historyRef.current.push({ nodes, edges })
+    historyRef.current.push({
+      nodes: deepClone(nodes),
+      edges: deepClone(edges),
+    })
     if (historyRef.current.length > 200) historyRef.current.shift()
     redoRef.current = []
   }, [])

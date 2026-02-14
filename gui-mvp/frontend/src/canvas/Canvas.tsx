@@ -86,6 +86,43 @@ const SPECIALS: PaletteItem[] = [
   }
 ]
 
+function sanitizeEdges(nodes: RFNodeType[], edges: RFEdgeType[]): RFEdgeType[] {
+  const nodeById = new Map(nodes.map(n => [n.id, n] as const))
+
+  const hasOut = (nid: string, h?: string) => {
+    if (!h) return false
+    const n = nodeById.get(nid)
+    const outs = (n?.data as any)?.ports?.outputs || []
+    return outs.some((p: any) => p.id === h)
+  }
+
+  const hasIn = (nid: string, h?: string) => {
+    if (!h) return false
+    const n = nodeById.get(nid)
+    const ins = (n?.data as any)?.ports?.inputs || []
+    return ins.some((p: any) => p.id === h)
+  }
+
+  // Remove edges with missing endpoints or invalid handles
+  const filtered = edges.filter(e => {
+    if (!e.source || !e.target) return false
+    if (!nodeById.has(e.source) || !nodeById.has(e.target)) return false
+    const sh = (e as any).sourceHandle
+    const th = (e as any).targetHandle
+    if (!hasOut(e.source, sh)) return false
+    if (!hasIn(e.target, th)) return false
+    return true
+  })
+
+  // De-dup: keep last edge per target input handle
+  const map = new Map<string, RFEdgeType>()
+  for (const e of filtered) {
+    const key = `${e.target}::${(e as any).targetHandle}`
+    map.set(key, e)
+  }
+  return [...map.values()]
+}
+
 const Canvas = forwardRef<CanvasHandle>(function Canvas(_, ref) {
   return (
     <ReactFlowProvider>
@@ -304,10 +341,16 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
   }, [createSpecialNode, setNodes, commitSnapshotState])
 
   /** connect */
-  const onConnect: OnConnect = useCallback(
-    (params) => setEdges((eds: RFEdgeType[]) => addEdge({ ...params, animated: true } as any, eds) as RFEdgeType[]),
-    [setEdges]
-  )
+  const onConnect: OnConnect = useCallback((params) => {
+    setEdges((eds: RFEdgeType[]) => {
+      const { target, targetHandle } = params as any
+      // If target input port is specified, enforce single incoming edge per input handle
+      if (target && targetHandle) {
+        eds = eds.filter(e => !(e.target === target && (e as any).targetHandle === targetHandle))
+      }
+      return addEdge({ ...params, animated: true } as any, eds) as RFEdgeType[]
+    })
+  }, [setEdges])
   const validateConnection = useCallback(() => true, [])
 
   /** delete selection */
@@ -638,8 +681,10 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
           onApply={(patch) => {
             if (!editorNodeId) return
             const nextNodes = nodesRef.current.map(n => n.id === editorNodeId ? ({ ...n, data: { ...(n.data as any), ...(patch as any) } }) : n)
+            const nextEdges = sanitizeEdges(nextNodes, edgesRef.current)
             setNodes(nextNodes)
-            commitSnapshotState(nextNodes as any, edgesRef.current as any)
+            setEdges(nextEdges)
+            commitSnapshotState(nextNodes as any, nextEdges as any)
             setEditorOpen(false)
             setEditorNodeId(undefined)
           }}
@@ -651,8 +696,10 @@ const CanvasInner = forwardRef<CanvasHandle>(function CanvasInner(_, ref) {
           onApply={(patch) => {
             if (!dataEditorNodeId) return
             const nextNodes = nodesRef.current.map(n => n.id === dataEditorNodeId ? ({ ...n, data: { ...(n.data as any), ...(patch as any) } }) : n)
+            const nextEdges = sanitizeEdges(nextNodes, edgesRef.current)
             setNodes(nextNodes)
-            commitSnapshotState(nextNodes as any, edgesRef.current as any)
+            setEdges(nextEdges)
+            commitSnapshotState(nextNodes as any, nextEdges as any)
             setDataEditorOpen(false)
             setDataEditorNodeId(undefined)
           }}
