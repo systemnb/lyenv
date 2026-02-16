@@ -668,10 +668,13 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 	cmd.Env = withExtraEnv(os.Environ(), spec.Env)
 
 	// Capture stdout/stderr
+	// Capture stdout (keep buffered: stdout is reserved for final JSON response)
 	var outBuf bytes.Buffer
-	var errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+
+	// Stream stderr to terminal in real-time, and also keep a copy in errBuf for logs/errors
+	var errBuf bytes.Buffer
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
 
 	// IMPORTANT: send request JSON to stdin
 	stdinPipe, err := cmd.StdinPipe()
