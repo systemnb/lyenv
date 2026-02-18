@@ -101,6 +101,16 @@ function log(msg) {
   RESPONSE.logs.push(String(msg));
 }
 
+function log_stream(msg) {
+  const s = String(msg);
+  try {
+    process.stderr.write(s + "\n"); // real-time CLI
+  } catch {}
+  // also keep it in final response logs
+  RESPONSE.logs.push(s);
+}
+
+
 function emit_artifact(p) {
   RESPONSE.artifacts.push(String(p));
 }
@@ -162,6 +172,6 @@ module.exports = {
   // config
   config_get, config_plugin, config_global,
   // response
-  log, emit_artifact, mutate, plugin_write_config, global_write_config,
+  log, log_stream, emit_artifact, mutate, plugin_write_config, global_write_config,
   respond_ok, respond_error,
 };

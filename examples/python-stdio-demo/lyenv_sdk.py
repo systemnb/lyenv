@@ -143,6 +143,19 @@ def global_config(key: str, default: Any = None) -> Any:
 def log(msg: Any) -> None:
     _RESPONSE["logs"].append(str(msg))
 
+def log_stream(msg: Any) -> None:
+    """
+    Real-time log channel: write to stderr and flush immediately.
+    Also keep it in response logs (optional).
+    """
+    s = str(msg)
+    try:
+        sys.stderr.write(s + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+    _RESPONSE["logs"].append(s)
+
 def emit_artifact(path: Any) -> None:
     _RESPONSE["artifacts"].append(str(path))
 

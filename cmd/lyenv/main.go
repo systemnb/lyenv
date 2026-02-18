@@ -43,7 +43,7 @@ func main() {
 		bindir := strings.TrimSpace(flags["bindir"])
 		gui := strings.TrimSpace(flags["gui"])
 		initGUI := flags["init-gui"] != "0" // default true
-	
+
 		if err := selfinstall.Install(selfinstall.InstallOptions{
 			BinDir:  bindir,
 			GuiPath: gui,
@@ -52,12 +52,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Install failed: %v\n", err)
 			os.Exit(1)
 		}
-	
+
 	case "uninstall":
 		flags := config.ParseFlags(args[1:])
 		bindir := strings.TrimSpace(flags["bindir"])
 		purge := flags["purge-gui"] == "1"
-	
+
 		if err := selfinstall.Uninstall(selfinstall.UninstallOptions{
 			BinDir:   bindir,
 			PurgeGUI: purge,
@@ -142,7 +142,7 @@ func main() {
 			value := args[3]
 			flags := config.ParseFlags(args[4:])
 			typeOpt := flags["type"]
-			if err := config.ConfigSetWithType(".", "lyenv.yaml", key, value, typeOpt); err != nil {
+			if err := config.ConfigSetWithType(mustEnvDir(), "lyenv.yaml", key, value, typeOpt); err != nil {
 				fmt.Fprintf(os.Stderr, "Config set failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -158,7 +158,7 @@ func main() {
 				os.Exit(2)
 			}
 			key := strings.TrimSpace(args[2])
-			out, err := config.ConfigGet(".", "lyenv.yaml", key)
+			out, err := config.ConfigGet(mustEnvDir(), "lyenv.yaml", key)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Config get failed: %v\n", err)
 				os.Exit(1)
@@ -168,7 +168,7 @@ func main() {
 		case "dump":
 			if len(args) == 3 {
 				file := strings.TrimSpace(args[2])
-				if err := config.ConfigDump(".", "lyenv.yaml", "", file); err != nil {
+				if err := config.ConfigDump(mustEnvDir(), "lyenv.yaml", "", file); err != nil {
 					fmt.Fprintf(os.Stderr, "Config dump failed: %v\n", err)
 					os.Exit(1)
 				}
@@ -176,7 +176,7 @@ func main() {
 			} else if len(args) == 4 {
 				key := strings.TrimSpace(args[2])
 				file := strings.TrimSpace(args[3])
-				if err := config.ConfigDump(".", "lyenv.yaml", key, file); err != nil {
+				if err := config.ConfigDump(mustEnvDir(), "lyenv.yaml", key, file); err != nil {
 					fmt.Fprintf(os.Stderr, "Config dump failed: %v\n", err)
 					os.Exit(1)
 				}
@@ -194,7 +194,7 @@ func main() {
 			file := strings.TrimSpace(args[2])
 			flags := config.ParseFlags(args[3:])
 			strategy := config.ParseMergeStrategy(flags["merge"])
-			if err := config.ConfigLoadWithStrategy(".", "lyenv.yaml", file, strategy); err != nil {
+			if err := config.ConfigLoadWithStrategy(mustEnvDir(), "lyenv.yaml", file, strategy); err != nil {
 				fmt.Fprintf(os.Stderr, "Config load failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -215,7 +215,7 @@ func main() {
 			typeOpt := flags["type"]
 			strategy := config.ParseMergeStrategy(flags["merge"])
 			inputOn := flags["input"] == "1"
-			if err := config.ConfigImportJSON(".", "lyenv.yaml", jsonFile, jsonKey, destKey, typeOpt, strategy, inputOn); err != nil {
+			if err := config.ConfigImportJSON(mustEnvDir(), "lyenv.yaml", jsonFile, jsonKey, destKey, typeOpt, strategy, inputOn); err != nil {
 				fmt.Fprintf(os.Stderr, "Config importjson failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -237,7 +237,7 @@ func main() {
 			typeOpt := flags["type"]
 			strategy := config.ParseMergeStrategy(flags["merge"])
 			inputOn := flags["input"] == "1"
-			if err := config.ConfigImportYAML(".", "lyenv.yaml", yamlFile, yamlKey, destKey, typeOpt, strategy, inputOn); err != nil {
+			if err := config.ConfigImportYAML(mustEnvDir(), "lyenv.yaml", yamlFile, yamlKey, destKey, typeOpt, strategy, inputOn); err != nil {
 				fmt.Fprintf(os.Stderr, "Config importyaml failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -289,12 +289,12 @@ func main() {
 					os.Exit(1)
 				}
 				defer cleanup()
-				if err := plugin.PluginAddLocal(".", extractedRoot, overrideName); err != nil {
+				if err := plugin.PluginAddLocal(mustEnvDir(), extractedRoot, overrideName); err != nil {
 					fmt.Fprintf(os.Stderr, "Plugin add (zip) failed: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
-				if err := plugin.PluginAddLocal(".", pathOrZip, overrideName); err != nil {
+				if err := plugin.PluginAddLocal(mustEnvDir(), pathOrZip, overrideName); err != nil {
 					fmt.Fprintf(os.Stderr, "Plugin add failed: %v\n", err)
 					os.Exit(1)
 				}
@@ -335,13 +335,13 @@ func main() {
 					os.Exit(1)
 				}
 				defer cleanup()
-				if err := plugin.PluginAddLocal(".", extractedRoot, overrideName); err != nil {
+				if err := plugin.PluginAddLocal(mustEnvDir(), extractedRoot, overrideName); err != nil {
 					fmt.Fprintf(os.Stderr, "Plugin install (zip) failed: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
 				// existing logic (center by name, local path, repo/ref/source/proxy)
-				if err := plugin.PluginAdd(".", nameOrPath, source, repo, ref, proxy, overrideName, Version); err != nil {
+				if err := plugin.PluginAdd(mustEnvDir(), nameOrPath, source, repo, ref, proxy, overrideName, Version); err != nil {
 					fmt.Fprintf(os.Stderr, "Plugin install failed: %v\n", err)
 					os.Exit(1)
 				}
@@ -353,7 +353,7 @@ func main() {
 				os.Exit(2)
 			}
 			input := strings.TrimSpace(args[2])
-			dir, installName, err := plugin.ResolvePluginDir(".", input)
+			dir, installName, err := plugin.ResolvePluginDir(mustEnvDir(), input)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin info failed: %v\n", err)
 				os.Exit(1)
@@ -385,7 +385,7 @@ func main() {
 			installName := strings.TrimSpace(args[2])
 			flags := config.ParseFlags(args[3:])
 			force := flags["force"] == "1"
-			if err := plugin.PluginRemove(".", installName, force); err != nil {
+			if err := plugin.PluginRemove(mustEnvDir(), installName, force); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin remove failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -402,7 +402,7 @@ func main() {
 			ref := flags["ref"]
 			source := flags["source"]
 			proxy := flags["proxy"]
-			if err := plugin.PluginUpdate(".", installName, repo, ref, source, proxy); err != nil {
+			if err := plugin.PluginUpdate(mustEnvDir(), installName, repo, ref, source, proxy); err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin update failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -411,7 +411,7 @@ func main() {
 		case "list":
 			flags := config.ParseFlags(args[2:])
 			wantJSON := flags["json"] == "1"
-			r, err := plugin.LoadRegistry(".")
+			r, err := plugin.LoadRegistry(mustEnvDir())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin list failed: %v\n", err)
 				os.Exit(1)
@@ -436,7 +436,7 @@ func main() {
 				os.Exit(2)
 			}
 			kws := args[2:]
-			res, err := plugin.SearchCenterPlugins(".", kws)
+			res, err := plugin.SearchCenterPlugins(mustEnvDir(), kws)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Plugin search failed: %v\n", err)
 				os.Exit(1)
@@ -457,7 +457,7 @@ func main() {
 			sub2 := args[2]
 			switch sub2 {
 			case "sync":
-				p, err := plugin.CenterSync(".")
+				p, err := plugin.CenterSync(mustEnvDir())
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Center sync failed: %v\n", err)
 					os.Exit(1)
@@ -524,7 +524,7 @@ func main() {
 		}
 
 		// Call plugin runtime with options
-		rec, err := plugin.RunPluginCommandWithRecord(ctx, ".", pl, cmd, passArgs, strategy, keepGoing)
+		rec, err := plugin.RunPluginCommandWithRecord(ctx, mustEnvDir(), pl, cmd, passArgs, strategy, keepGoing)
 		if wantJSON && rec != nil {
 			b, _ := json.Marshal(rec)
 			fmt.Println(string(b))
@@ -677,7 +677,7 @@ func fileExists(p string) bool {
 // If top-level contains a single subdir and manifest.yaml is inside it, we descend.
 func unzipToTempAndDetectRoot(zipPath string) (root string, cleanup func(), err error) {
 	// ensure cache dir
-	cacheDir := filepath.Join(".", "cache")
+	cacheDir := filepath.Join(mustEnvDir(), "cache")
 	if e := os.MkdirAll(cacheDir, 0o755); e != nil {
 		return "", func() {}, fmt.Errorf("mkdir cache: %w", e)
 	}
@@ -781,4 +781,12 @@ func detectManifestRoot(dest string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("manifest.yaml not found in %s", dest)
+}
+func mustEnvDir() string {
+	d, err := env.ResolveEnvDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(2)
+	}
+	return d
 }

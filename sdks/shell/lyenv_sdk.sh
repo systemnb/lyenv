@@ -72,6 +72,16 @@ ly_config_get() {
 
 # Response helpers
 ly_log() { LY_RESP_LOGS+=("$*"); }
+# Real-time log (stderr). Also append to response logs for the final JSON (optional).
+ly_log_stream() {
+  local msg="$*"
+  # stderr to show immediately in CLI
+  printf '%s\n' "$msg" >&2
+  # ensure flush (printf is unbuffered for terminals; keep explicit behavior)
+  # also keep it for final response logs
+  LYENV_RESP_LOGS+=("$msg")
+}
+
 ly_emit_artifact() { LY_RESP_ARTIFACTS+=("$*"); }
 
 # Mutations (jq preferred)
