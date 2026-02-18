@@ -94,8 +94,8 @@ Examples:
   lyenv plugin install tester --name=testtools
   tctl run
 
-  # Run with timeout and fail-fast policy
-  lyenv run testtools slow --timeout=5 --fail-fast
+  # lyenv flags must be prefixed with --lyenv-
+  gcc --lyenv-timeout=10 --lyenv-merge=keep --input a.c --out a
 
 Notes:
   - 'stdio' steps return structured JSON (status/logs/artifacts/mutations).

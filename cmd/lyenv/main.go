@@ -484,9 +484,18 @@ func main() {
 		var rawFlags []string
 		var passArgs []string
 
+		// New rule:
+		// - plugin args are default, INCLUDING "--xxx" flags
+		// - lyenv args must be prefixed with "--lyenv-"
+		// Examples:
+		//
+		//	gcc --input a.c --out a
+		//	gcc --lyenv-timeout=10 --lyenv-merge=keep --input a.c --out a
 		for _, a := range args[3:] {
-			if strings.HasPrefix(a, "--") {
-				rawFlags = append(rawFlags, a)
+			if strings.HasPrefix(a, "--lyenv-") {
+				// Strip the prefix and convert to a normal flag form understood by ParseFlags:
+				// --lyenv-timeout=10 -> --timeout=10
+				rawFlags = append(rawFlags, "--"+strings.TrimPrefix(a, "--lyenv-"))
 			} else {
 				passArgs = append(passArgs, a)
 			}
