@@ -144,6 +144,8 @@ func RunPluginCommandWithRecord(ctx context.Context, envDir, pluginName, command
 		}
 	}
 
+	invokedCWD, _ := os.Getwd()
+
 	// Build stdio request payload.
 	req := map[string]interface{}{
 		"action": command,
@@ -153,6 +155,7 @@ func RunPluginCommandWithRecord(ctx context.Context, envDir, pluginName, command
 			"bin":        filepath.Join(envDir, "bin"),
 			"workspace":  filepath.Join(envDir, "workspace"),
 			"plugin_dir": pluginDir,
+			"cwd":        invokedCWD,
 		},
 		"system": map[string]string{
 			"os":   runtime.GOOS,
@@ -489,7 +492,18 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 	}
 
 	// Resolve effective workdir.
+	// NEW default: use user's invocation cwd (req.paths.cwd) so relative file paths behave naturally.
+	// If spec.Workdir is set, it still wins (absolute or plugin-relative).
 	resolvedWorkdir := absPluginDir
+
+	// 1) default to invocation cwd if provided
+	if pm, ok := req["paths"].(map[string]string); ok {
+		if c := strings.TrimSpace(pm["cwd"]); c != "" {
+			resolvedWorkdir = c
+		}
+	}
+
+	// 2) explicit workdir in manifest overrides default
 	if strings.TrimSpace(spec.Workdir) != "" {
 		if filepath.IsAbs(spec.Workdir) {
 			resolvedWorkdir = spec.Workdir
@@ -497,9 +511,12 @@ func spawnStdio(ctx context.Context, spec *CommandSpec, pluginDir string, req ma
 			resolvedWorkdir = filepath.Join(absPluginDir, spec.Workdir)
 		}
 	} else {
-		scriptsDir := filepath.Join(absPluginDir, "scripts")
-		if st, err := os.Stat(scriptsDir); err == nil && st.IsDir() {
-			resolvedWorkdir = scriptsDir
+		// 3) fallback for old behavior when cwd missing (best-effort)
+		if resolvedWorkdir == absPluginDir {
+			scriptsDir := filepath.Join(absPluginDir, "scripts")
+			if st, err := os.Stat(scriptsDir); err == nil && st.IsDir() {
+				resolvedWorkdir = scriptsDir
+			}
 		}
 	}
 
